@@ -1,0 +1,24 @@
+[Unit]
+Description=Llama.cpp Dynamic Router Daemon
+After=network.target
+
+[Service]
+Type=simple
+# CHANGE THIS: Replace with your actual Linux username
+User=YOUR_LINUX_USERNAME
+
+# CHANGE THIS: Replace with the path to your llama.cpp folder
+WorkingDirectory=/path/to/your/llama.cpp
+
+# CHANGE THIS: Replace paths with your llama-server and models directory
+ExecStart=/path/to/your/llama.cpp/llama-server --host 127.0.0.1 --port 8080 --models-dir /path/to/your/models
+
+# Auto-restart if the daemon crashes or is killed by Saltnitor
+Restart=always
+RestartSec=3
+
+# Ensure logs bypass Python/System buffers to stream instantly to Saltnitor
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
