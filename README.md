@@ -1,6 +1,6 @@
 # Saltnitor
 
-**Saltnitor** is a high-performance, hardware-agnostic Terminal User Interface (TUI) built in Rust. Its name is a fusion of **Salt** (from @Saltless-bruh) and **Monitor**, serving as a central "Command Center" for orchestrating local Large Language Models (LLMs) and monitoring hybrid hardware pressure between GPU VRAM and System RAM.
+**Saltnitor** is a high-performance, hardware-agnostic Terminal User Interface (TUI) built in Rust. Its serving as a central "Command Center" for orchestrating local Large Language Models (LLMs) and monitoring hybrid hardware pressure between GPU VRAM and System RAM.
 
 Designed specifically for developers running `llama.cpp` or `llama-router` on Linux, Saltnitor provides real-time telemetry, log analysis, and tactical control in a single, lightweight binary.
 
