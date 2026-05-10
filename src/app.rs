@@ -88,7 +88,7 @@ impl App {
             cpu_cores: vec![0.0; 16],
             //GPU
             gpu_temp: 0,
-            gpu_power: "0W / 170W".to_string(),
+            gpu_power: "0W".to_string(),
             gpu_processes: Vec::new(),
             gpu_util: "0%".to_string(),
             gpu_fan: "0%".to_string(),
