@@ -58,7 +58,7 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     Because the program manages system services and performs port auditing, it requires `sudo` to function correctly.
     
     ```
-    sudo ./target/release/saltnitor
+    sudo saltnitor
     ```
     
 
