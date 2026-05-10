@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Sparkline, Clear, Paragraph, BarChart}, // <--- Added BarChart
+    widgets::{Block, Borders, Gauge, List, ListItem, Sparkline, Clear, Paragraph, BarChart},
     Frame,
 };
 use crate::app::App;
@@ -10,7 +10,6 @@ use crate::app::App;
 /// The main rendering function called on every frame.
 pub fn draw(f: &mut Frame, app: &mut App) {
     // 1. Define the Master Layout Layout
-    // Split the screen: Top section for hardware (fixed height of 10), Bottom for logs (remaining space)
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -105,7 +104,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .logs
         .iter()
         .map(|log| {
-            // Apply Regex/Keyword color parsing on the fly
             let style = if log.contains("OOM") || log.contains("Failed") || log.contains("error") {
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
             } else if log.contains("Loading Model") || log.contains("Hot-swap") {
@@ -119,12 +117,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         })
         .collect();
 
+    // Dynamically insert the CLI service name into the log title
+    let logs_title = format!(" {} systemd logs [PageUp/PageDown to scroll] ", app.service_name);
     let logs_list = List::new(log_items)
-        .block(Block::default().title(" llama-router systemd logs [PageUp/PageDown to scroll] ").borders(Borders::ALL))
+        .block(Block::default().title(logs_title).borders(Borders::ALL))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED).fg(Color::Cyan))
         .highlight_symbol(">> ");
     
-    // Render the logs into the bottom half of the screen
     f.render_stateful_widget(logs_list, main_chunks[1], &mut app.log_state);
 
     // 6. API Interrogator (Mini-Console)
@@ -176,11 +175,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // 7. Dynamic Config Tuner (Popup Overlay)
     if app.show_tuner {
         let area = centered_rect(40, 30, f.area());
-        
-        // Clear the background behind the popup
         f.render_widget(Clear, area); 
 
-        // Highlight the currently selected option
         let ngl_style = if app.tuner_selected == 0 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
         let ctx_style = if app.tuner_selected == 1 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
 
@@ -225,15 +221,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 9. GPU Inspector Popup (Vertical Stack UI)
     if app.show_gpu_inspector {
-        // Rigid box: exactly 55 characters wide, 20 rows tall (Stacked)
-        let area = centered_rect(55, 20, f.area());
+        let area = centered_rect_absolute(55, 20, f.area());
         f.render_widget(Clear, area);
 
         let popup_block = Block::default().title(format!(" {} Architecture ", app.gpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Green));
         let inner_area = popup_block.inner(area);
         f.render_widget(popup_block, area);
 
-        // Split vertically into 3 chunks
         let chunks = Layout::default().direction(Direction::Vertical).constraints([
             Constraint::Length(3), // Text Stats
             Constraint::Length(5), // Gauges
@@ -242,7 +236,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
         let temp_color = if app.gpu_temp > 80 { Color::Red } else if app.gpu_temp > 70 { Color::Yellow } else { Color::Green };
         
-        // Chunk 0: Top Text Stats
         let stats_text = vec![
             Line::from(vec![
                 Span::raw(" Core Temp:  "), Span::styled(format!("{:<15}°C", app.gpu_temp), Style::default().fg(temp_color).add_modifier(Modifier::BOLD)),
@@ -255,7 +248,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ];
         f.render_widget(Paragraph::new(stats_text), chunks[0]);
 
-        // Chunk 1: Utilization Gauges
         let gauge_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(2), Constraint::Length(2)]).split(chunks[1]);
         
         let gpu_u_val = app.gpu_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
@@ -267,7 +259,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         f.render_widget(g_gauge, gauge_chunks[0]);
         f.render_widget(v_gauge, gauge_chunks[1]);
 
-        // Chunk 2: Active Processes
         let mut proc_text = vec![
             Line::from(""), // Spacer
             Line::from(Span::styled(" --- Active VRAM Processes ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
@@ -284,22 +275,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 10. System/CPU Inspector Popup (Vertical Stack UI)
     if app.show_sys_inspector {
-        // Rigid box: exactly 65 characters wide, 24 rows tall (Stacked)
-        let area = centered_rect(65, 24, f.area()); 
+        let area = centered_rect_absolute(65, 24, f.area()); 
         f.render_widget(Clear, area);
 
         let popup_block = Block::default().title(format!(" {} & DDR5 ", app.cpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
         let inner_area = popup_block.inner(area);
         f.render_widget(popup_block, area);
 
-        // Split vertically into 3 chunks
         let chunks = Layout::default().direction(Direction::Vertical).constraints([
             Constraint::Length(3),  // Uptime & Swap
             Constraint::Length(7),  // Bar Chart
             Constraint::Min(0),     // Process List
         ]).split(inner_area);
 
-        // Chunk 0: Stats
         let swap_color = if app.swap_used > 1.0 { Color::Red } else { Color::Green };
         let hours = app.sys_uptime / 3600;
         let mins = (app.sys_uptime % 3600) / 60;
@@ -310,7 +298,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ];
         f.render_widget(Paragraph::new(stats_text), chunks[0]);
 
-        // Chunk 1: 16-Thread Bar Chart
         let labels: Vec<String> = (0..app.cpu_cores.len()).map(|i| format!("C{}", i)).collect();
         let mut barchart_data: Vec<(&str, u64)> = Vec::new();
         
@@ -329,7 +316,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         
         f.render_widget(cpu_barchart, chunks[1]);
 
-        // Chunk 2: Process List
         let mut proc_text = vec![
             Line::from(""), // Spacer
             Line::from(Span::styled(" --- Top 8 System RAM Culprits ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
@@ -341,8 +327,29 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-/// Helper to construct a centered rectangle with a fixed row height
-fn centered_rect(fixed_x: u16, fixed_y: u16, r: Rect) -> Rect {
+/// Helper to construct a centered rectangle with a percentage width/height
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Helper to construct a perfectly centered rectangle with absolute width and height
+fn centered_rect_absolute(fixed_x: u16, fixed_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

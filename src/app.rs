@@ -5,11 +5,16 @@ use ratatui::widgets::ListState;
 pub struct App {
     pub should_quit: bool,
 
-    //Hardware info
+    // Hardware info
     pub cpu_name: String,
     pub cpu_core_count: usize,
     pub gpu_name: String,
     pub has_nvidia: bool,
+
+    // CLI Configurations
+    pub host: String,
+    pub port: u16,
+    pub service_name: String,
     
     // Telemetry State
     pub vram_used: f64,
@@ -66,27 +71,44 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cpu_name: String, cpu_core_count: usize, ram_total: f64, gpu_name: String, vram_total: f64, has_nvidia: bool) -> Self {
+    pub fn new(
+        cpu_name: String, 
+        cpu_core_count: usize, 
+        ram_total: f64, 
+        gpu_name: String, 
+        vram_total: f64, 
+        has_nvidia: bool,
+        host: String,
+        port: u16,
+        service_name: String
+    ) -> Self {
         let mut log_state = ListState::default();
         log_state.select(Some(0));
+        
+        let port_status = format!("Port {}: SCANNING...", port);
+        
         Self {
             should_quit: false,
-            //GPU/CPU Info
+            // GPU/CPU Info
             cpu_name,
             cpu_core_count,
             gpu_name,
             has_nvidia,
             vram_total,
             ram_total,
-            //VRAM
+            // CLI Configs
+            host,
+            port,
+            service_name,
+            // VRAM
             vram_used: 0.0,
             vram_util: "0%".to_string(),
-            //RAM
+            // RAM
             ram_used: 0.0,
-            //CPU
+            // CPU
             cpu_history: vec![0; 100],
             cpu_cores: vec![0.0; 16],
-            //GPU
+            // GPU
             gpu_temp: 0,
             gpu_power: "0W".to_string(),
             gpu_processes: Vec::new(),
@@ -106,11 +128,10 @@ impl App {
             available_models: Vec::new(),
             show_model_selector: false,
             model_selector_index: 0,
-            port_status: "Port 8080: SCANNING...".to_string(),
-            log_state: ListState::default(),
+            port_status,
+            log_state,
             auto_scroll: true,
             
-
             swap_used: 0.0,
             swap_total: 1.0,
             sys_processes: Vec::new(),

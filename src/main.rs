@@ -18,10 +18,31 @@ use sysinfo::{System, CpuRefreshKind, RefreshKind, MemoryRefreshKind};
 use tokio::process::Command;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use clap::Parser;
+
+/// Saltnitor: High-performance hybrid hardware monitor and LLM orchestrator.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// The port the AI daemon is running on
+    #[arg(short, long, default_value_t = 8080)]
+    port: u16,
+
+    /// The host address of the AI daemon
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+
+    /// The systemd service name for the AI daemon
+    #[arg(short, long, default_value = "llama-router")]
+    service_name: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 0. Pre-Flight Hardware Scan
+    // 0. Parse Command Line Arguments
+    let cli = Cli::parse();
+
+    // 1. Pre-Flight Hardware Scan
     let mut sys = System::new_all();
     sys.refresh_cpu_specifics(CpuRefreshKind::everything());
     sys.refresh_memory();
@@ -51,18 +72,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 1. Terminal Initialization
+    // 2. Terminal Initialization
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 2. Application State & Channels
-    let mut app = App::new(cpu_name, cpu_core_count, ram_total, gpu_name, vram_total, has_nvidia);
+    // 3. Application State & Channels
+    let mut app = App::new(
+        cpu_name, cpu_core_count, ram_total, gpu_name, vram_total, has_nvidia,
+        cli.host.clone(), cli.port, cli.service_name.clone()
+    );
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
-    // 3. Start Event Producers (Background Tasks)
+    // 4. Start Event Producers (Background Tasks)
     let tx_keys = tx.clone();
     let tx_logs = tx.clone();
 
@@ -123,55 +147,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut gpu_fan = String::from("N/A");
             let mut gpu_clocks = String::from("N/A");
             
-            // Expanded query to grab 9 specific data points at once
-            if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .args(["--query-gpu=memory.used,temperature.gpu,power.draw,power.limit,utilization.gpu,utilization.memory,fan.speed,clocks.gr,clocks.mem", "--format=csv,noheader,nounits"])
-                .output()
-            {
-                let out = String::from_utf8_lossy(&output.stdout);
-                let parts: Vec<&str> = out.trim().split(", ").collect();
-                if parts.len() >= 9 {
-                    vram_used = parts[0].parse::<f64>().unwrap_or(0.0) / 1024.0;
-                    gpu_temp = parts[1].parse::<i32>().unwrap_or(0);
-                    gpu_power = format!("{}W / {}W", parts[2], parts[3]);
-                    gpu_util = parts[4].to_string();
-                    vram_util = parts[5].to_string();
-                    gpu_fan = parts[6].to_string();
-                    gpu_clocks = format!("{} MHz / {} MHz", parts[7], parts[8]); // Core / Mem
+            if has_nvidia {
+                // Expanded query to grab 9 specific data points at once
+                if let Ok(output) = std::process::Command::new("nvidia-smi")
+                    .args(["--query-gpu=memory.used,temperature.gpu,power.draw,power.limit,utilization.gpu,utilization.memory,fan.speed,clocks.gr,clocks.mem", "--format=csv,noheader,nounits"])
+                    .output()
+                {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    let parts: Vec<&str> = out.trim().split(", ").collect();
+                    if parts.len() >= 9 {
+                        vram_used = parts[0].parse::<f64>().unwrap_or(0.0) / 1024.0;
+                        gpu_temp = parts[1].parse::<i32>().unwrap_or(0);
+                        gpu_power = format!("{}W / {}W", parts[2], parts[3]);
+                        gpu_util = parts[4].to_string();
+                        vram_util = parts[5].to_string();
+                        gpu_fan = parts[6].to_string();
+                        gpu_clocks = format!("{} MHz / {} MHz", parts[7], parts[8]); // Core / Mem
+                    }
                 }
             }
 
             // NVIDIA Metrics (Processes)
             let mut gpu_processes: Vec<(String, f64)> = Vec::new();
-            if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .args(["--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"])
-                .output()
-            {
-                let out = String::from_utf8_lossy(&output.stdout);
-                for line in out.lines() {
-                    let parts: Vec<&str> = line.split(", ").collect();
-                    if parts.len() == 2 {
-                        let name = parts[0].split('/').last().unwrap_or(parts[0]).to_string(); // Get just the exe name
-                        let mem = parts[1].parse::<f64>().unwrap_or(0.0) / 1024.0;
-                        gpu_processes.push((name, mem));
+            if has_nvidia {
+                if let Ok(output) = std::process::Command::new("nvidia-smi")
+                    .args(["--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"])
+                    .output()
+                {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    for line in out.lines() {
+                        let parts: Vec<&str> = line.split(", ").collect();
+                        if parts.len() == 2 {
+                            let name = parts[0].split('/').last().unwrap_or(parts[0]).to_string(); // Get just the exe name
+                            let mem = parts[1].parse::<f64>().unwrap_or(0.0) / 1024.0;
+                            gpu_processes.push((name, mem));
+                        }
                     }
                 }
-            }
-
-            if !has_nvidia {
-                gpu_temp = 0;
-                gpu_power = "N/A".to_string();
-                gpu_util = "0".to_string();
-                vram_util = "0".to_string();
-                gpu_fan = "N/A".to_string();
-                gpu_clocks = "N/A".to_string();
             }
 
             let _ = tx_hw.send(Event::HardwareUpdate {
                 vram_used, ram_used, cpu_load: cpu_load as u64,
                 gpu_temp, gpu_power, gpu_processes,
                 cpu_cores, swap_used, swap_total, sys_processes,
-                // Add this new line right here:
                 gpu_util, vram_util, gpu_fan, gpu_clocks, sys_uptime,
             }).await;
 
@@ -180,10 +198,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Task C: Journalctl Log Streamer
+    let service_c = cli.service_name.clone();
     tokio::spawn(async move {
-        // Stream the llama-router logs asynchronously
+        // Stream the dynamic service logs asynchronously
         let mut child = Command::new("journalctl")
-            .args(["-u", "llama-router", "-f", "-n", "30"])
+            .args(["-u", &service_c, "-f", "-n", "30"])
             .stdout(Stdio::piped())
             .spawn()
             .expect("Failed to spawn journalctl");
@@ -200,13 +219,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Task D: Background Model Discovery
     let tx_models = tx.clone();
+    let host_d = cli.host.clone();
+    let port_d = cli.port;
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         loop {
-            // Ping the router's model manifest endpoint
-            if let Ok(res) = client.get("http://127.0.0.1:8080/v1/models").send().await {
+            // Ping the router's model manifest endpoint dynamically
+            let url = format!("http://{}:{}/v1/models", host_d, port_d);
+            if let Ok(res) = client.get(&url).send().await {
                 if let Ok(json) = res.json::<serde_json::Value>().await {
-                    // Parse the JSON array to extract the "id" of each model
                     if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
                         let models: Vec<String> = data.iter()
                             .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
@@ -216,46 +237,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            // Sleep for 5 seconds before checking again
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 
     // Task E: Background Session & Port Auditor
     let tx_port = tx.clone();
+    let port_e = cli.port;
     tokio::spawn(async move {
         loop {
-            // Use 'ss' to look for processes holding port 8080
+            // Use 'ss' to dynamically look for processes holding our target port
+            let cmd = format!("ss -lptn 'sport = :{}'", port_e);
             let output = tokio::process::Command::new("sh")
                 .arg("-c")
-                // -lptn: listening, processes, tcp, numeric
-                .arg("ss -lptn 'sport = :8080'")
+                .arg(&cmd)
                 .output()
                 .await;
 
             let status_msg = if let Ok(out) = output {
                 let stdout = String::from_utf8_lossy(&out.stdout);
+                let port_str = port_e.to_string();
                 
-                if stdout.trim().is_empty() || !stdout.contains("8080") {
-                    "Port 8080: OFFLINE (Daemon Down)".to_string()
+                if stdout.trim().is_empty() || !stdout.contains(&port_str) {
+                    format!("Port {}: OFFLINE (Daemon Down)", port_e)
                 } else if stdout.contains("llama-server") || stdout.contains("llama-se") {
-                    "Port 8080: SECURE (llama-server bound)".to_string()
+                    format!("Port {}: SECURE (llama-server bound)", port_e)
                 } else {
-                    // If it's not empty, and not llama-server, a rogue Python script or zombie has it!
-                    "Port 8080: ZOMBIE THREAD DETECTED!".to_string()
+                    format!("Port {}: ZOMBIE THREAD DETECTED!", port_e)
                 }
             } else {
-                "Port 8080: AUDIT ERROR".to_string()
+                format!("Port {}: AUDIT ERROR", port_e)
             };
 
             let _ = tx_port.send(Event::PortAudit(status_msg)).await;
-            
-            // Sweep the port every 3 seconds
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
     });
 
-    // 4. The Render & Control Loop
+    // 5. The Render & Control Loop
     loop {
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
@@ -276,7 +295,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Enter => {
                                     if !app.available_models.is_empty() {
                                         let selected_model = &app.available_models[app.model_selector_index];
-                                        // Auto-inject the selected model into the JSON payload
                                         app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, selected_model);
                                         app.add_log(format!(">>> API Target locked to: {}", selected_model));
                                     }
@@ -285,7 +303,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 _ => {}
                             }
                         } else if app.show_tuner {
-                            // --- TUNER MENU CONTROLS --- (Leave your existing tuner logic here)
+                            // --- TUNER MENU CONTROLS ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
                                 KeyCode::Up => app.tuner_selected = 0,
@@ -309,36 +327,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else if app.console_focused {
                             // --- API INTERROGATOR CONTROLS ---
                             match key.code {
-                                KeyCode::Esc => app.console_focused = false, // Exit insert mode
-                                KeyCode::Char(c) => app.console_input.push(c), // Type into buffer
-                                KeyCode::Backspace => { app.console_input.pop(); } // Delete chars
+                                KeyCode::Esc => app.console_focused = false,
+                                KeyCode::Char(c) => app.console_input.push(c),
+                                KeyCode::Backspace => { app.console_input.pop(); }
                                 KeyCode::Enter => {
-                                    // Lock the UI briefly to show loading state
                                     app.last_api_result = "Sending payload...".to_string();
                                     app.last_ttft = 0;
                                     
-                                    // Clone data to move into the async worker
                                     let payload = app.console_input.clone();
                                     let tx_api = tx.clone();
+                                    let host_api = app.host.clone();
+                                    let port_api = app.port;
                                     
                                     tokio::spawn(async move {
                                         let client = Client::new();
                                         let start = Instant::now();
+                                        let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
                                         
-                                        // Fire the raw POST request to the local router
-                                        let response = client.post("http://127.0.0.1:8080/v1/chat/completions")
+                                        let response = client.post(&url)
                                             .header("Content-Type", "application/json")
                                             .body(payload)
                                             .send()
                                             .await;
                                             
-                                        // Calculate exact TTFT (Round trip to first byte of response)
                                         let ttft_ms = start.elapsed().as_millis();
                                         
                                         match response {
                                             Ok(res) => {
                                                 let status = res.status().to_string();
-                                                // Grab a snippet of the response to display
                                                 let text = res.text().await.unwrap_or_else(|_| "Failed to parse body".to_string());
                                                 let snippet = text.chars().take(80).collect::<String>();
                                                 
@@ -364,18 +380,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::PageUp => app.scroll_logs_up(),
                                 KeyCode::PageDown => app.scroll_logs_down(),
                                 
-                                // Graceful Systemctl Bindings
+                                // Dynamic Systemctl Bindings
                                 KeyCode::Char('S') => { // Capital S
-                                    app.add_log(">>> SYSTEMCTL: Starting llama-router...".to_string());
-                                    tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "start", "llama-router"]).output().await; });
+                                    let svc = app.service_name.clone();
+                                    app.add_log(format!(">>> SYSTEMCTL: Starting {}...", svc));
+                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "start", &svc]).output().await; });
                                 }
                                 KeyCode::Char('X') => { // Capital X
-                                    app.add_log(">>> SYSTEMCTL: Stopping llama-router...".to_string());
-                                    tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", "llama-router"]).output().await; });
+                                    let svc = app.service_name.clone();
+                                    app.add_log(format!(">>> SYSTEMCTL: Stopping {}...", svc));
+                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await; });
                                 }
                                 KeyCode::Char('R') => { // Capital R
-                                    app.add_log(">>> SYSTEMCTL: Restarting llama-router...".to_string());
-                                    tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", "llama-router"]).output().await; });
+                                    let svc = app.service_name.clone();
+                                    app.add_log(format!(">>> SYSTEMCTL: Restarting {}...", svc));
+                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc]).output().await; });
                                 }
                                 
                                 KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -386,7 +405,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    // Add the network response handler here (still inside the select! block)
                     Event::ApiResponse { ttft_ms, status, message } => {
                         app.last_ttft = ttft_ms;
                         app.last_api_result = format!("[{}] {}", status, message);
@@ -394,7 +412,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
-                        // Ensure index doesn't go out of bounds if a model is removed
                         if app.model_selector_index >= app.available_models.len() && !app.available_models.is_empty() {
                             app.model_selector_index = app.available_models.len() - 1;
                         }
@@ -418,7 +435,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.gpu_clocks = gpu_clocks;
                         app.sys_uptime = sys_uptime;
 
-                        // Manage the rolling sparkline history
                         if app.cpu_history.len() >= 100 {
                             app.cpu_history.remove(0);
                         }
@@ -427,7 +443,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Event::LogLine(line) => {
                         app.add_log(line);
                     }
-                    Event::Tick => {} // Triggers a redraw implicitly
+                    Event::Tick => {}
                 }
             }
         }
@@ -437,7 +453,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 5. Clean Teardown
+    // 6. Clean Teardown
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
