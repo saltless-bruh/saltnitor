@@ -4,7 +4,7 @@
 
 Designed specifically for developers running `llama.cpp` or `llama-router` on Linux, Saltnitor provides real-time telemetry, log analysis, and tactical control in a single, lightweight binary.
 
-<img width="1920" height="1048" alt="image" src="https://github.com/user-attachments/assets/e0b96bd1-e880-46de-a6f8-d6297ff547cc" />
+<img width="1921" height="1003" alt="image" src="https://github.com/user-attachments/assets/72348c2c-50c8-4d5e-8086-b39f20f96a38" />
 
 ## 🚀 Key Features
 
