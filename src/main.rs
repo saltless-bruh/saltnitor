@@ -295,6 +295,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Enter => {
                                     if !app.available_models.is_empty() {
                                         let selected_model = &app.available_models[app.model_selector_index];
+                                        
+                                        // --- NEW: Update the active model state ---
+                                        app.active_model = selected_model.clone();
+                                        
+                                        // Auto-inject the selected model into the JSON payload
                                         app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, selected_model);
                                         app.add_log(format!(">>> API Target locked to: {}", selected_model));
                                     }
@@ -356,12 +361,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             Ok(res) => {
                                                 let status = res.status().to_string();
                                                 let text = res.text().await.unwrap_or_else(|_| "Failed to parse body".to_string());
+                                                
+                                                // --- NEW: Calculate Total Time and TPS ---
+                                                let total_time_ms = start.elapsed().as_millis();
+                                                let gen_time_s = (total_time_ms.saturating_sub(ttft_ms)) as f64 / 1000.0;
+                                                
+                                                let mut est_tokens = 0.0;
+                                                // Try to grab exact token count from OpenAI JSON spec
+                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                    if let Some(usage) = json.get("usage") {
+                                                        if let Some(tokens) = usage.get("completion_tokens").and_then(|t| t.as_f64()) {
+                                                            est_tokens = tokens;
+                                                        }
+                                                    }
+                                                }
+                                                // Fallback heuristic if JSON parsing fails
+                                                if est_tokens == 0.0 {
+                                                    let word_count = text.split_whitespace().count() as f64;
+                                                    est_tokens = word_count * 1.3;
+                                                }
+                                                
+                                                let tps = if gen_time_s > 0.0 { est_tokens / gen_time_s } else { 0.0 };
+                                                
                                                 let snippet = text.chars().take(80).collect::<String>();
                                                 
-                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms, status, message: snippet }).await;
+                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms, tps, status, message: snippet }).await;
                                             }
                                             Err(e) => {
-                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms: 0, status: "ERROR".to_string(), message: e.to_string() }).await;
+                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms: 0, tps: 0.0, status: "ERROR".to_string(), message: e.to_string() }).await;
                                             }
                                         }
                                     });
@@ -405,17 +432,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    Event::ApiResponse { ttft_ms, status, message } => {
+                    Event::ApiResponse { ttft_ms, tps, status, message } => {
                         app.last_ttft = ttft_ms;
+                        app.last_tps = tps;
                         app.last_api_result = format!("[{}] {}", status, message);
                         app.add_log(format!("API Strike Completed: {}ms", ttft_ms));
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
+                        
+                        // --- NEW: Auto-select the first model if we don't have one ---
+                        if app.active_model == "None" && !app.available_models.is_empty() {
+                            let first_model = app.available_models[0].clone();
+                            app.active_model = first_model.clone();
+                            
+                            // Dynamically rewrite the console input with the first discovered model
+                            app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, first_model);
+                        }
+                        
+                        // Ensure index doesn't go out of bounds if a model is removed
                         if app.model_selector_index >= app.available_models.len() && !app.available_models.is_empty() {
                             app.model_selector_index = app.available_models.len() - 1;
                         }
-                    }
+                    } 
                     Event::PortAudit(status) => {
                         app.port_status = status;
                     }

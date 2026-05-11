@@ -55,9 +55,11 @@ pub struct App {
     pub console_input: String,
     pub last_api_result: String,
     pub last_ttft: u128,
+    pub last_tps: f64,
 
     // Model Selector State
     pub available_models: Vec<String>,
+    pub active_model: String,
     pub show_model_selector: bool,
     pub model_selector_index: usize,
 
@@ -122,10 +124,12 @@ impl App {
             current_ngl: 33,   // Safe default to fit an 8B model entirely in the RTX 3060
             current_ctx: 8192, // Standard context window
             console_focused: false,
-            console_input: r#"{"model": "qwen2", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(),
+            console_input: r#"{"model": "None", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(),
             last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(),
             last_ttft: 0,
+            last_tps: 0.0,
             available_models: Vec::new(),
+            active_model: "None".to_string(),
             show_model_selector: false,
             model_selector_index: 0,
             port_status,

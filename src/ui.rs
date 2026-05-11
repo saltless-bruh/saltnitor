@@ -13,7 +13,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10), // Telemetry area
+            Constraint::Length(6), // Telemetry area
             Constraint::Min(0),     // Log area expands to fill the middle
             Constraint::Length(4),  // API Interrogator area
             Constraint::Length(3),  // Hotkeys panel at the very bottom
@@ -35,9 +35,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(3), // VRAM Gauge height
             Constraint::Length(3), // RAM Gauge height
-            Constraint::Length(1), // Spacer padding
-            Constraint::Length(1), // Port Auditor line
-            Constraint::Min(0),
         ])
         .split(top_chunks[0]);
     
@@ -57,12 +54,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Color::Green
     };
 
-    let vram_title = if app.has_nvidia { format!(" {} VRAM Saturation ", app.gpu_name) } else { " [!] NO COMPATIBLE GPU DETECTED ".to_string() };
+    // --- NEW: Split the title into left and right components ---
+    let vram_title_left = if app.has_nvidia { format!(" {} VRAM Saturation ", app.gpu_name) } else { " [!] NO COMPATIBLE GPU DETECTED ".to_string() };
+    let vram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.vram_used, app.vram_total)).alignment(ratatui::layout::Alignment::Right);
+
     let vram_gauge = Gauge::default()
-        .block(Block::default().title(vram_title).borders(Borders::ALL))
+        .block(Block::default()
+            .title(vram_title_left)
+            .title(vram_title_right) // Adds the numbers to the right side of the border
+            .borders(Borders::ALL))
         .gauge_style(Style::default().fg(vram_color).add_modifier(Modifier::BOLD))
         .ratio(vram_ratio)
-        .label(format!("{:.2} / {:.1} GB", app.vram_used, app.vram_total));
+        .label(""); // Clears the text out of the colored bar
+
     f.render_widget(vram_gauge, gauge_chunks[0]);
 
     // 3. DDR5 RAM Spillover Gauge
@@ -72,28 +76,27 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         0.0
     };
 
+    // --- NEW: Split the title into left and right components ---
+    let ram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.ram_used, app.ram_total)).alignment(ratatui::layout::Alignment::Right);
+
     let ram_gauge = Gauge::default()
-        .block(Block::default().title(" DDR5 System RAM Spillover ").borders(Borders::ALL))
+        .block(Block::default()
+            .title(" DDR5 System RAM Spillover ")
+            .title(ram_title_right) // Adds the numbers to the right side of the border
+            .borders(Borders::ALL))
         .gauge_style(Style::default().fg(Color::Cyan))
         .ratio(ram_ratio)
-        .label(format!("{:.2} / {:.1} GB", app.ram_used, app.ram_total));
-    f.render_widget(ram_gauge, gauge_chunks[1]);
-    
-    // 3.5 Session & Port Auditor
-    let port_style = if app.port_status.contains("ZOMBIE") {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD).add_modifier(Modifier::RAPID_BLINK)
-    } else if app.port_status.contains("SECURE") {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
+        .label(""); // Clears the text out of the colored bar
 
-    let port_alert = Paragraph::new(Span::styled(&app.port_status, port_style));
-    f.render_widget(port_alert, gauge_chunks[3]);
+    f.render_widget(ram_gauge, gauge_chunks[1]);
 
     // 4. Ryzen 7 7700 CPU Sparkline
+    // --- NEW: Grab the most recent load value from the history buffer ---
+    let current_cpu_load = app.cpu_history.last().copied().unwrap_or(0);
+    let cpu_title = format!(" {} (Current Load: {}%) ", app.cpu_name, current_cpu_load);
+
     let cpu_sparkline = Sparkline::default()
-        .block(Block::default().title(format!(" {} Engine Load (60s) ", app.cpu_name)).borders(Borders::ALL))
+        .block(Block::default().title(cpu_title).borders(Borders::ALL)) // <-- Use the dynamic title
         .data(&app.cpu_history)
         .style(Style::default().fg(Color::Magenta))
         .max(100);
@@ -117,10 +120,32 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    // Dynamically insert the CLI service name into the log title
-    let logs_title = format!(" {} systemd logs [PageUp/PageDown to scroll] ", app.service_name);
+    // --- Define Port Status Style ---
+    let port_style = if app.port_status.contains("ZOMBIE") {
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD).add_modifier(Modifier::RAPID_BLINK)
+    } else if app.port_status.contains("SECURE") {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    // --- Create a bottom-right aligned title for the port status ---
+    let port_title = Line::from(vec![
+        Span::raw("[ "),
+        Span::styled(&app.port_status, port_style),
+        Span::raw(" ]"),
+    ]).alignment(ratatui::layout::Alignment::Right);
+
+    let logs_title = format!(" {} systemd logs ", app.service_name);
+    
+    // --- Inject title_bottom into the Block ---
     let logs_list = List::new(log_items)
-        .block(Block::default().title(logs_title).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(logs_title)
+                .title(port_title)
+                .borders(Borders::ALL)
+        )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED).fg(Color::Cyan))
         .highlight_symbol(">> ");
     
@@ -128,7 +153,27 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 6. API Interrogator (Mini-Console)
     let console_border_color = if app.console_focused { Color::Cyan } else { Color::DarkGray };
-    let console_title = if app.console_focused { " API Interrogator [INSERT MODE] " } else { " API Interrogator [Press 'i' to focus] " };
+
+    // --- NEW: Split titles and distribute them across the borders ---
+    let title_main = " API Interrogator ";
+
+    let title_target = Line::from(vec![
+        Span::raw("[Target: "),
+        Span::styled(&app.active_model, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw("] "),
+    ]).alignment(ratatui::layout::Alignment::Right);
+
+    let title_mode = if app.console_focused {
+        // --- NEW: Added the 'Esc to exit' hint with a subtle gray style ---
+        Line::from(vec![
+            Span::styled(" [INSERT MODE] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("[Press 'Esc' to exit] ", Style::default().fg(Color::DarkGray)),
+        ])
+        .alignment(ratatui::layout::Alignment::Right)
+    } else {
+        Line::from(Span::styled(" [Press 'i' to focus] ", Style::default().fg(Color::DarkGray)))
+            .alignment(ratatui::layout::Alignment::Right)
+    };
 
     let console_text = vec![
         Line::from(vec![
@@ -137,12 +182,20 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ]),
         Line::from(vec![
             Span::styled(format!("[TTFT: {}ms] ", app.last_ttft), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("[Speed: {:.1} t/s] ", app.last_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::styled(&app.last_api_result, Style::default().fg(Color::Gray)),
         ]),
     ];
 
     let console_block = Paragraph::new(console_text)
-        .block(Block::default().title(console_title).borders(Borders::ALL).style(Style::default().fg(console_border_color)));
+        .block(
+            Block::default()
+                .title(title_main)
+                .title(title_target)      // Pushes to top-right
+                .title_bottom(title_mode) // Pushes to bottom-right
+                .borders(Borders::ALL)
+                .style(Style::default().fg(console_border_color))
+        );
     
     f.render_widget(console_block, main_chunks[2]);
 
@@ -174,22 +227,29 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 7. Dynamic Config Tuner (Popup Overlay)
     if app.show_tuner {
-        let area = centered_rect(40, 30, f.area());
+        // --- NEW: Use absolute sizing to wrap tightly (45 chars wide, 7 rows tall) ---
+        let area = centered_rect_absolute(45, 7, f.area());
+        
+        // Clear the background behind the popup
         f.render_widget(Clear, area); 
 
+        // Highlight the currently selected option
         let ngl_style = if app.tuner_selected == 0 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
         let ctx_style = if app.tuner_selected == 1 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
 
+        // --- NEW: Removed extra blank lines to fit the snug box ---
         let text = vec![
-            Line::from(Span::styled(format!("> GPU Layers (ngl): {}  [< / >]", app.current_ngl), ngl_style)),
             Line::from(""),
+            Line::from(Span::styled(format!("> GPU Layers (ngl): {}  [< / >]", app.current_ngl), ngl_style)),
             Line::from(Span::styled(format!("> Context Size (ctx): {}  [< / >]", app.current_ctx), ctx_style)),
             Line::from(""),
-            Line::from(Span::styled("[ENTER] Save & Apply  |  [ESC] Cancel", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("[ENTER] Save & Apply   |   [ESC] Cancel", Style::default().fg(Color::DarkGray))),
         ];
 
+        // --- NEW: Center-align the text inside the tightly wrapped box ---
         let popup_block = Paragraph::new(text)
-            .block(Block::default().title(" router.ini Tuner ").borders(Borders::ALL).style(Style::default().fg(Color::Cyan)));
+            .block(Block::default().title(" router.ini Tuner ").borders(Borders::ALL).style(Style::default().fg(Color::Cyan)))
+            .alignment(ratatui::layout::Alignment::Center);
         
         f.render_widget(popup_block, area);
     }
