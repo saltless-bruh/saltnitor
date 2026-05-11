@@ -487,6 +487,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.add_log(">>> TACTICAL KILL-SWITCH ENGAGED...".to_string());
                                     tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "killall", "-9", "llama-server"]).output().await; });
                                 }
+
+                                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+                                    let filename = format!("crash_dump_{}.txt", timestamp);
+                                    
+                                    // Gather state data
+                                    let active_model = app.active_model.clone();
+                                    let vram_used = app.vram_used;
+                                    let vram_total = app.vram_total;
+                                    let ram_used = app.ram_used;
+                                    let ram_total = app.ram_total;
+                                    let gpu_temp = app.gpu_temp;
+                                    let gpu_power = app.gpu_power.clone();
+                                    let cpu_load = app.cpu_history.last().copied().unwrap_or(0);
+                                    let logs: Vec<String> = app.logs.iter().cloned().collect();
+
+                                    app.add_log(format!(">>> INITIATING CRASH DUMP -> {}", filename));
+
+                                    // Spawn async task to write the file
+                                    tokio::spawn(async move {
+                                        use tokio::io::AsyncWriteExt;
+                                        let mut content = String::new();
+                                        content.push_str(&format!("--- SALTNITOR CRASH DUMP [{}] ---\n\n", timestamp));
+                                        content.push_str(&format!("TARGET MODEL: {}\n", active_model));
+                                        content.push_str(&format!("VRAM USAGE:   {:.2} / {:.2} GB\n", vram_used, vram_total));
+                                        content.push_str(&format!("RAM USAGE:    {:.2} / {:.2} GB\n", ram_used, ram_total));
+                                        content.push_str(&format!("GPU TEMP:     {} C\n", gpu_temp));
+                                        content.push_str(&format!("GPU POWER:    {}\n", gpu_power));
+                                        content.push_str(&format!("CPU LOAD:     {}%\n\n", cpu_load));
+                                        
+                                        content.push_str("--- RECENT LOGS (100 LINES) ---\n");
+                                        for log in logs {
+                                            content.push_str(&format!("{}\n", log));
+                                        }
+
+                                        if let Ok(mut file) = tokio::fs::File::create(&filename).await {
+                                            let _ = file.write_all(content.as_bytes()).await;
+                                        }
+                                    });
+                                }
                                 _ => {}
                             }
                         }

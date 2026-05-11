@@ -241,6 +241,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Span::raw("Daemon Start/Stop/Restart  |  "),
         Span::styled("[Ctrl+K] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
         Span::raw("Kill-Switch"),
+        Span::styled("[Ctrl+D] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::raw("Crash Dump  |  "),
+        Span::styled("[Ctrl+K] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        Span::raw("Kill-Switch"),
     ]);
 
     let hotkeys_block = Paragraph::new(hotkeys_text)

@@ -1,0 +1,40 @@
+--- SALTNITOR CRASH DUMP [20260511_163653] ---
+
+TARGET MODEL: ggml-vocab-aquila
+VRAM USAGE:   0.00 / 12.00 GB
+RAM USAGE:    0.00 / 30.95 GB
+GPU TEMP:     0 C
+GPU POWER:    0W
+CPU LOAD:     0%
+
+--- RECENT LOGS (100 LINES) ---
+May 11 15:33:59 pop-os llama-server[150494]: main: n_parallel is set to auto, using n_parallel = 4 and kv_unified = true
+May 11 15:33:59 pop-os llama-server[150494]: system info: n_threads = 8, n_threads_batch = 8, total_threads = 16
+May 11 15:33:59 pop-os llama-server[150494]: system_info: n_threads = 8 (n_threads_batch = 8) / 16 | CUDA : ARCHS = 860 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | AVX512 = 1 | AVX512_VBMI = 1 | AVX512_VNNI = 1 | AVX512_BF16 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 |
+May 11 15:33:59 pop-os llama-server[150494]: Running without SSL
+May 11 15:33:59 pop-os llama-server[150494]: init: using 15 threads for HTTP server
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models: Loaded 0 cached model presets
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models: Loaded 17 local model presets from /home/laz/ai-models/llama.cpp/models
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models: Available models (17) (*: custom preset)
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-aquila
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-baichuan
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-bert-bge
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-command-r
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-deepseek-coder
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-deepseek-llm
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-falcon
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-gpt-2
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-gpt-neox
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-llama-bpe
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-llama-spm
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-mpt
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-nomic-bert-moe
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-phi-3
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-qwen2
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-refact
+May 11 15:33:59 pop-os llama-server[150494]: srv   load_models:     ggml-vocab-starcoder
+May 11 15:33:59 pop-os llama-server[150494]: main: starting router server, no model will be loaded in this process
+May 11 15:33:59 pop-os llama-server[150494]: start: binding port with default address family
+May 11 15:33:59 pop-os llama-server[150494]: main: router server is listening on http://127.0.0.1:8080
+May 11 15:33:59 pop-os llama-server[150494]: main: NOTE: router mode is experimental
+May 11 15:33:59 pop-os llama-server[150494]: main:       it is not recommended to use this mode in untrusted environments
