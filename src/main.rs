@@ -635,6 +635,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // --- NEW: Save History Buffer to Disk before exiting ---
+    if !app.console_history.is_empty() {
+        let history_content = app.console_history.join("\n");
+        let _ = std::fs::write(".saltnitor_history", history_content);
+    }
+
     // 6. Clean Teardown
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;

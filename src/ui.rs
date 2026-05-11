@@ -9,6 +9,17 @@ use crate::app::App;
 
 /// The main rendering function called on every frame.
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // --- NEW: Terminal Size Safety Check ---
+    if f.area().width < 80 || f.area().height < 24 {
+        let warning = Paragraph::new("\n\n[!] TERMINAL FOOTPRINT TOO SMALL [!]\n\nPlease expand window to at least 80x24.")
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK))
+            .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Red)));
+            
+        f.render_widget(warning, f.area());
+        return; // Halt the rest of the UI rendering to prevent a math panic
+    }
+    
     // 1. Define the Master Layout Layout
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)

@@ -92,6 +92,18 @@ impl App {
         log_state.select(Some(0));
         
         let port_status = format!("Port {}: SCANNING...", port);
+
+        // --- NEW: Load API History from Disk ---
+        let mut console_history = Vec::new();
+        if let Ok(content) = std::fs::read_to_string(".saltnitor_history") {
+            for line in content.lines() {
+                if !line.trim().is_empty() {
+                    console_history.push(line.to_string());
+                }
+            }
+        }
+        let history_index = console_history.len();
+        // ---------------------------------------
         
         Self {
             should_quit: false,
@@ -130,8 +142,8 @@ impl App {
             console_focused: false,
             console_input: r#"{"model": "None", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(),
             console_cursor: 69,
-            console_history: Vec::new(),
-            history_index: 0,
+            console_history, 
+            history_index,
             last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(),
             last_ttft: 0,
             last_eval_tps: 0.0,
