@@ -302,6 +302,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         // Auto-inject the selected model into the JSON payload
                                         app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, selected_model);
                                         app.add_log(format!(">>> API Target locked to: {}", selected_model));
+                                        app.console_cursor = app.console_input.chars().count();
                                     }
                                     app.show_model_selector = false;
                                 }
@@ -332,18 +333,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         } else if app.console_focused {
                             // --- API INTERROGATOR CONTROLS ---
                             match key.code {
-                                KeyCode::Esc => app.console_focused = false,
-                                KeyCode::Char(c) => app.console_input.push(c),
-                                KeyCode::Backspace => { app.console_input.pop(); }
+                                KeyCode::Esc => app.console_focused = false, // Exit insert mode
+                                KeyCode::Left => {
+                                    if app.console_cursor > 0 { app.console_cursor -= 1; }
+                                }
+                                KeyCode::Right => {
+                                    if app.console_cursor < app.console_input.chars().count() { app.console_cursor += 1; }
+                                }
+                                KeyCode::Up => {
+                                    if !app.console_history.is_empty() && app.history_index > 0 {
+                                        app.history_index -= 1;
+                                        app.console_input = app.console_history[app.history_index].clone();
+                                        app.console_cursor = app.console_input.chars().count(); // Snap cursor to end
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if app.history_index < app.console_history.len() {
+                                        app.history_index += 1;
+                                        if app.history_index == app.console_history.len() {
+                                            app.console_input = String::new(); // Clear when cycling past the newest
+                                        } else {
+                                            app.console_input = app.console_history[app.history_index].clone();
+                                        }
+                                        app.console_cursor = app.console_input.chars().count();
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    // Insert character exactly at the cursor position
+                                    let mut chars: Vec<char> = app.console_input.chars().collect();
+                                    chars.insert(app.console_cursor, c);
+                                    app.console_input = chars.into_iter().collect();
+                                    app.console_cursor += 1;
+                                }
+                                KeyCode::Backspace => {
+                                    if app.console_cursor > 0 {
+                                        let mut chars: Vec<char> = app.console_input.chars().collect();
+                                        chars.remove(app.console_cursor - 1);
+                                        app.console_input = chars.into_iter().collect();
+                                        app.console_cursor -= 1;
+                                    }
+                                }
+                                KeyCode::Delete => {
+                                    let mut chars: Vec<char> = app.console_input.chars().collect();
+                                    if app.console_cursor < chars.len() {
+                                        chars.remove(app.console_cursor);
+                                        app.console_input = chars.into_iter().collect();
+                                    }
+                                }
                                 KeyCode::Enter => {
+                                    // --- NEW: Add to History Buffer ---
+                                    if !app.console_input.trim().is_empty() {
+                                        if app.console_history.is_empty() || app.console_history.last() != Some(&app.console_input) {
+                                            app.console_history.push(app.console_input.clone());
+                                            if app.console_history.len() > 10 {
+                                                app.console_history.remove(0); // Keep max 10 entries
+                                            }
+                                        }
+                                        app.history_index = app.console_history.len();
+                                    }
+
+                                    // Lock the UI briefly to show loading state
                                     app.last_api_result = "Sending payload...".to_string();
                                     app.last_ttft = 0;
                                     
+                                    // Clone data to move into the async worker
                                     let payload = app.console_input.clone();
                                     let tx_api = tx.clone();
+
                                     let host_api = app.host.clone();
                                     let port_api = app.port;
-                                    
+
                                     tokio::spawn(async move {
                                         let client = Client::new();
                                         let start = Instant::now();
@@ -448,6 +507,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             
                             // Dynamically rewrite the console input with the first discovered model
                             app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, first_model);
+                            app.console_cursor = app.console_input.chars().count();
                         }
                         
                         // Ensure index doesn't go out of bounds if a model is removed

@@ -53,6 +53,9 @@ pub struct App {
     // API Interrogator State
     pub console_focused: bool,
     pub console_input: String,
+    pub console_cursor: usize,
+    pub console_history: Vec<String>,
+    pub history_index: usize,
     pub last_api_result: String,
     pub last_ttft: u128,
     pub last_tps: f64,
@@ -125,6 +128,9 @@ impl App {
             current_ctx: 8192, // Standard context window
             console_focused: false,
             console_input: r#"{"model": "None", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(),
+            console_cursor: 69,
+            console_history: Vec::new(),
+            history_index: 0,
             last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(),
             last_ttft: 0,
             last_tps: 0.0,

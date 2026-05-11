@@ -175,11 +175,35 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .alignment(ratatui::layout::Alignment::Right)
     };
 
+    // --- NEW: Dynamic Cursor Rendering ---
+    let chars: Vec<char> = app.console_input.chars().collect();
+    let before: String = chars.iter().take(app.console_cursor).collect();
+    let cursor_char: String = chars.iter().skip(app.console_cursor).take(1).collect();
+    let after: String = chars.iter().skip(app.console_cursor + 1).collect();
+
+    // Build the input line with a highlighted block cursor if focused
+    let mut input_line = vec![
+        Span::styled("> ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw(before),
+    ];
+
+    if app.console_focused {
+        if cursor_char.is_empty() {
+            // Cursor is at the very end of the string
+            input_line.push(Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)));
+        } else {
+            // Cursor is highlighting a specific character
+            input_line.push(Span::styled(cursor_char, Style::default().add_modifier(Modifier::REVERSED)));
+        }
+        input_line.push(Span::raw(after));
+    } else {
+        // When not focused, just print normally without the block cursor
+        input_line.push(Span::raw(cursor_char));
+        input_line.push(Span::raw(after));
+    }
+
     let console_text = vec![
-        Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::raw(&app.console_input),
-        ]),
+        Line::from(input_line), // Use the dynamically built cursor line
         Line::from(vec![
             Span::styled(format!("[TTFT: {}ms] ", app.last_ttft), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
             Span::styled(format!("[Speed: {:.1} t/s] ", app.last_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
