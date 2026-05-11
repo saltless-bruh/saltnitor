@@ -15,7 +15,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(6), // Telemetry area
             Constraint::Min(0),     // Log area expands to fill the middle
-            Constraint::Length(4),  // API Interrogator area
+            Constraint::Length(5),  // API Interrogator area
             Constraint::Length(3),  // Hotkeys panel at the very bottom
         ])
         .split(f.area());
@@ -216,11 +216,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .block(
             Block::default()
                 .title(title_main)
-                .title(title_target)      // Pushes to top-right
-                .title_bottom(title_mode) // Pushes to bottom-right
+                .title(title_target)      
+                .title_bottom(title_mode) 
                 .borders(Borders::ALL)
                 .style(Style::default().fg(console_border_color))
-        );
+        )
+        .wrap(ratatui::widgets::Wrap { trim: true }); // <-- NEW: Forces text to wrap beautifully!
     
     f.render_widget(console_block, main_chunks[2]);
 
@@ -240,8 +241,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Span::raw("Hardware Inspectors  |  "),
         Span::styled("[Shift+S/X/R] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw("Daemon Start/Stop/Restart  |  "),
-        Span::styled("[Ctrl+K] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        Span::raw("Kill-Switch"),
         Span::styled("[Ctrl+D] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
         Span::raw("Crash Dump  |  "),
         Span::styled("[Ctrl+K] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),

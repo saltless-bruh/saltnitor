@@ -426,8 +426,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let mut eval_tps = 0.0;
                                                 let mut gen_tps = 0.0;
                                                 
+                                                // --- NEW: A variable to hold our clean, extracted AI response ---
+                                                let mut clean_response = text.clone(); 
+                                                
                                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                                    // 1. Try to parse exact llama.cpp timings (if exposed by the server)
+                                                    
+                                                    // --- NEW: Extract the actual readable text from the OpenAI JSON ---
+                                                    if let Some(content) = json.get("choices")
+                                                        .and_then(|c| c.get(0))
+                                                        .and_then(|c| c.get("message"))
+                                                        .and_then(|m| m.get("content"))
+                                                        .and_then(|c| c.as_str()) 
+                                                    {
+                                                        // Replace newlines with a symbol so it flows nicely in the dashboard
+                                                        clean_response = content.replace('\n', " ⏎ ").trim().to_string();
+                                                    }
+
+                                                    // 1. Try to parse exact llama.cpp timings
                                                     if let Some(timings) = json.get("timings") {
                                                         let p_n = timings.get("prompt_n").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                                         let p_ms = timings.get("prompt_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -437,13 +452,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                         if p_ms > 0.0 { eval_tps = p_n / (p_ms / 1000.0); }
                                                         if g_ms > 0.0 { gen_tps = g_n / (g_ms / 1000.0); }
                                                     } else {
-                                                        // 2. Heuristic fallback using standard OpenAI usage block
+                                                        // 2. Heuristic fallback
                                                         let p_tok = json.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
                                                         let c_tok = json.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
                                                         
                                                         let total_s = total_time_ms as f64 / 1000.0;
                                                         if total_s > 0.0 {
-                                                            // Assume Generation tokens take ~10x longer to process than Prompt Eval tokens
                                                             let weight_eval = p_tok * 1.0;
                                                             let weight_gen = c_tok * 10.0;
                                                             let total_weight = f64::max(weight_eval + weight_gen, 1.0);
@@ -457,7 +471,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                 }
                                                 
-                                                // 3. Absolute fallback for errors or non-JSON payloads
                                                 if gen_tps == 0.0 {
                                                     let word_count = text.split_whitespace().count() as f64;
                                                     let total_s = total_time_ms as f64 / 1000.0;
@@ -466,14 +479,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                 }
 
-                                                let snippet = text.chars().take(80).collect::<String>();
-                                                
+                                                // --- NEW: Remove the 80 character limit and use our clean text ---
                                                 let _ = tx_api.send(Event::ApiResponse { 
                                                     ttft_ms: total_time_ms, 
                                                     eval_tps, 
                                                     gen_tps, 
                                                     status, 
-                                                    message: snippet 
+                                                    message: clean_response // <-- Feed the parsed text here
                                                 }).await;
                                             }
                                             Err(e) => {
