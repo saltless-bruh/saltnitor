@@ -4,6 +4,8 @@
 
 Designed specifically for developers running `llama.cpp` or `llama-router` on Linux, Saltnitor provides real-time telemetry, log analysis, and tactical control in a single, lightweight binary.
 
+<img width="1920" height="1001" alt="Screenshot_2026-05-11_14-59-00" src="https://github.com/user-attachments/assets/5b52eeee-24a7-4d41-85d7-54ce85e2cdc6" />
+
 ## 🚀 Key Features
 
 - **Dynamic Hardware Probing**: On boot, Saltnitor automatically identifies your CPU architecture (AVX-512 support, core counts) and NVIDIA GPU specifications. It dynamically scales its UI to match your machine's thread count and memory limits.
