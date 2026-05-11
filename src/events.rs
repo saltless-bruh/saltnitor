@@ -31,7 +31,8 @@ pub enum Event {
     // Add this new event:
     ApiResponse {
         ttft_ms: u128,
-        tps: f64,
+        eval_tps: f64,
+        gen_tps: f64,
         status: String,
         message: String,
     },

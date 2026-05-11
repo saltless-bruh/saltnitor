@@ -58,7 +58,8 @@ pub struct App {
     pub history_index: usize,
     pub last_api_result: String,
     pub last_ttft: u128,
-    pub last_tps: f64,
+    pub last_eval_tps: f64,
+    pub last_gen_tps: f64,
 
     // Model Selector State
     pub available_models: Vec<String>,
@@ -133,7 +134,8 @@ impl App {
             history_index: 0,
             last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(),
             last_ttft: 0,
-            last_tps: 0.0,
+            last_eval_tps: 0.0,
+            last_gen_tps: 0.0,
             available_models: Vec::new(),
             active_model: "None".to_string(),
             show_model_selector: false,

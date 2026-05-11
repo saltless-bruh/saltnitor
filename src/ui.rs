@@ -206,7 +206,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Line::from(input_line), // Use the dynamically built cursor line
         Line::from(vec![
             Span::styled(format!("[TTFT: {}ms] ", app.last_ttft), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("[Speed: {:.1} t/s] ", app.last_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            // --- UPDATED: Multi-Metric Display ---
+            Span::styled(format!("[Eval: {:.1} t/s | Gen: {:.1} t/s] ", app.last_eval_tps, app.last_gen_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::styled(&app.last_api_result, Style::default().fg(Color::Gray)),
         ]),
     ];
@@ -284,12 +285,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 8. Live Model Selector (Popup Overlay)
     if app.show_model_selector {
-        let area = centered_rect(50, 40, f.area());
+        // --- NEW: Dynamic absolute height based on model count (min 5, max 20 lines) ---
+        let height = (app.available_models.len() as u16 + 2).clamp(5, 20);
+        let area = centered_rect_absolute(60, height, f.area());
+        
         f.render_widget(Clear, area);
 
         let mut items = Vec::new();
         if app.available_models.is_empty() {
-            items.push(ListItem::new("Scanning for models..."));
+            // --- NEW: Center the loading text ---
+            items.push(ListItem::new(Line::from("Scanning for models...").alignment(ratatui::layout::Alignment::Center)));
         } else {
             for (i, model) in app.available_models.iter().enumerate() {
                 let style = if i == app.model_selector_index {
@@ -297,7 +302,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 } else {
                     Style::default().fg(Color::White)
                 };
-                items.push(ListItem::new(Span::styled(format!("  {}  ", model), style)));
+                
+                // --- NEW: Center-align the text inside the list, creating a clean "pill" highlight ---
+                items.push(ListItem::new(
+                    Line::from(Span::styled(format!("  {}  ", model), style))
+                        .alignment(ratatui::layout::Alignment::Center)
+                ));
             }
         }
 
@@ -413,27 +423,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         f.render_widget(Paragraph::new(proc_text), chunks[2]);
     }
-}
-
-/// Helper to construct a centered rectangle with a percentage width/height
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 /// Helper to construct a perfectly centered rectangle with absolute width and height

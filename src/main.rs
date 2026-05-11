@@ -414,40 +414,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             .send()
                                             .await;
                                             
-                                        let ttft_ms = start.elapsed().as_millis();
+                                        let _ttft_ms = start.elapsed().as_millis();
                                         
                                         match response {
                                             Ok(res) => {
                                                 let status = res.status().to_string();
                                                 let text = res.text().await.unwrap_or_else(|_| "Failed to parse body".to_string());
                                                 
-                                                // --- NEW: Calculate Total Time and TPS ---
                                                 let total_time_ms = start.elapsed().as_millis();
-                                                let gen_time_s = (total_time_ms.saturating_sub(ttft_ms)) as f64 / 1000.0;
                                                 
-                                                let mut est_tokens = 0.0;
-                                                // Try to grab exact token count from OpenAI JSON spec
+                                                let mut eval_tps = 0.0;
+                                                let mut gen_tps = 0.0;
+                                                
                                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                                    if let Some(usage) = json.get("usage") {
-                                                        if let Some(tokens) = usage.get("completion_tokens").and_then(|t| t.as_f64()) {
-                                                            est_tokens = tokens;
+                                                    // 1. Try to parse exact llama.cpp timings (if exposed by the server)
+                                                    if let Some(timings) = json.get("timings") {
+                                                        let p_n = timings.get("prompt_n").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                        let p_ms = timings.get("prompt_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                        let g_n = timings.get("predicted_n").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                        let g_ms = timings.get("predicted_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                        
+                                                        if p_ms > 0.0 { eval_tps = p_n / (p_ms / 1000.0); }
+                                                        if g_ms > 0.0 { gen_tps = g_n / (g_ms / 1000.0); }
+                                                    } else {
+                                                        // 2. Heuristic fallback using standard OpenAI usage block
+                                                        let p_tok = json.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
+                                                        let c_tok = json.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
+                                                        
+                                                        let total_s = total_time_ms as f64 / 1000.0;
+                                                        if total_s > 0.0 {
+                                                            // Assume Generation tokens take ~10x longer to process than Prompt Eval tokens
+                                                            let weight_eval = p_tok * 1.0;
+                                                            let weight_gen = c_tok * 10.0;
+                                                            let total_weight = f64::max(weight_eval + weight_gen, 1.0);
+                                                            
+                                                            let eval_s = total_s * (weight_eval / total_weight);
+                                                            let gen_s = total_s * (weight_gen / total_weight);
+                                                            
+                                                            if eval_s > 0.0 { eval_tps = p_tok / eval_s; }
+                                                            if gen_s > 0.0 { gen_tps = c_tok / gen_s; }
                                                         }
                                                     }
                                                 }
-                                                // Fallback heuristic if JSON parsing fails
-                                                if est_tokens == 0.0 {
+                                                
+                                                // 3. Absolute fallback for errors or non-JSON payloads
+                                                if gen_tps == 0.0 {
                                                     let word_count = text.split_whitespace().count() as f64;
-                                                    est_tokens = word_count * 1.3;
+                                                    let total_s = total_time_ms as f64 / 1000.0;
+                                                    if total_s > 0.0 {
+                                                        gen_tps = (word_count * 1.3) / total_s;
+                                                    }
                                                 }
-                                                
-                                                let tps = if gen_time_s > 0.0 { est_tokens / gen_time_s } else { 0.0 };
-                                                
+
                                                 let snippet = text.chars().take(80).collect::<String>();
                                                 
-                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms, tps, status, message: snippet }).await;
+                                                let _ = tx_api.send(Event::ApiResponse { 
+                                                    ttft_ms: total_time_ms, 
+                                                    eval_tps, 
+                                                    gen_tps, 
+                                                    status, 
+                                                    message: snippet 
+                                                }).await;
                                             }
                                             Err(e) => {
-                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms: 0, tps: 0.0, status: "ERROR".to_string(), message: e.to_string() }).await;
+                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms: 0, eval_tps: 0.0, gen_tps: 0.0, status: "ERROR".to_string(), message: e.to_string() }).await;
                                             }
                                         }
                                     });
@@ -531,11 +561,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    Event::ApiResponse { ttft_ms, tps, status, message } => {
+                    Event::ApiResponse { ttft_ms, eval_tps, gen_tps, status, message } => {
                         app.last_ttft = ttft_ms;
-                        app.last_tps = tps;
+                        app.last_eval_tps = eval_tps;
+                        app.last_gen_tps = gen_tps;
                         app.last_api_result = format!("[{}] {}", status, message);
-                        app.add_log(format!("API Strike Completed: {}ms", ttft_ms));
+                        app.add_log(format!("API Strike: {}ms | Eval: {:.1} t/s | Gen: {:.1} t/s", ttft_ms, eval_tps, gen_tps));
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
