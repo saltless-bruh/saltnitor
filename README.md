@@ -20,13 +20,19 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     
     - **Model Selector (`m`)**: Scan and hot-swap GGUF models dynamically via the `llama-router` API. Automatically targets the active model for console payloads.
         
-    - **Config Tuner (`t`)**: A multi-page tuner (use `Tab`) for `ngl`, `ctx`, threading, batching, cache types, rope scaling, draft settings, and prompt-cache flags, with live updates to `router.ini`.
+    - **Deep Engine Tuner (`t`)**: A paginated, 3-panel configuration manifest (cycle with `Tab`) allowing live, on-the-fly injection of advanced `llama.cpp` parameters directly to `router.ini`:
         
+        - _Page 1 (Compute & Memory)_: `ngl`, `ctx`, threads, batching, parallel slots, Flash Attention, mlock, no_mmap, and KV Cache quantization.
+            
+        - _Page 2 (Context & Caching)_: RoPE scaling, defragmentation thresholds, speculative decoding (Draft tokens), and persistent Prompt Caching to SSD.
+            
+        - _Page 3 (Default Sampling)_: Temperature, Top-K, Top-P, Min-P, and Repetition Penalties.
+            
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
     
     - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
         
-    - **Command History**: Features a Bash-style history buffer allowing you to cycle through previous payloads using the `Up` and `Down` arrow keys, complete with inline cursor editing. History persists to `.saltnitor_history` on exit.
+    - **Persistent Command History**: Features a Bash-style history buffer allowing you to cycle through previous payloads using the `Up` and `Down` arrow keys, complete with inline cursor editing. History is saved to `.saltnitor_history` on exit.
         
     - **Clean Response Parsing**: Automatically extracts, cleans, and wraps conversational AI text from raw OpenAI-compatible JSON responses.
         
@@ -37,8 +43,6 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     - **Crash Dumping (`Ctrl+D`)**: Instantly export a post-mortem snapshot of your exact system state (VRAM/RAM pressure, temperatures, active model, and the last 100 log lines) to a timestamped file during an Out-Of-Memory (OOM) event.
         
     - **Kill-Switch (`Ctrl+K`)**: A dedicated emergency binding to forcefully terminate rogue inference threads and clear hung ports.
-
-- **Sudo-Aware Configuration**: Loads `~/.config/saltnitor/config.toml` from the invoking user's home (even under `sudo`), with CLI overrides for host, port, and service name.
         
 
 ## 🛠 Prerequisites
@@ -56,16 +60,12 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
 
 1. **Clone the Repository**
     
-    Bash
-    
     ```
-    git clone https://github.com/Saltless-bruh/saltnitor.git
+    git clone [https://github.com/Saltless-bruh/saltnitor.git](https://github.com/Saltless-bruh/saltnitor.git)
     cd saltnitor
     ```
     
 2. **Build for Release**
-    
-    Bash
     
     ```
     cargo build --release
@@ -75,8 +75,6 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     
     Because the program manages system services and performs deep port auditing, it requires `sudo` to function correctly.
     
-    Bash
-    
     ```
     sudo ./target/release/saltnitor
     
@@ -84,45 +82,49 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     sudo cp ./target/release/saltnitor /usr/local/bin/
     sudo saltnitor
     ```
+    
 
-## ⚙️ Configuration
+## ⚙️ Persistent Configuration
 
-Saltnitor merges CLI arguments with a TOML config file. When run under `sudo`, it still resolves the config from the invoking user's home directory via `SUDO_USER`.
+Saltnitor utilizes a layered configuration architecture. It intelligently merges CLI arguments with a persistent TOML config file. **Crucially, it is Sudo-Aware:** when run under `sudo`, it bypasses the root profile and correctly resolves the config from the invoking user's home directory.
 
-**CLI flags**
-
-```
---host <host>
---port <port>
---service-name <name>
-```
-
-**Config file** (`~/.config/saltnitor/config.toml`)
+**1. CLI Override Flags**
 
 ```
+sudo saltnitor --host 192.168.1.5 --port 8081 --service-name my-llama
+```
+
+**2. Global Config File** (`~/.config/saltnitor/config.toml`)
+
+```
+# Saltnitor Defaults
 port = 8080
 host = "127.0.0.1"
 service_name = "llama-router"
+
+# Tuner Engine Limits
 default_ngl = 33
 default_ctx = 8192
 ```
-    
 
 ## ⌨️ Quick Reference
 
-|**Key**|**Action**|
+|   |   |
 |---|---|
+|**Key**|**Action**|
 |`q`|Quit Program|
-|`t`|Open Config Tuner|
+|`h`|Open Interactive Command Manual|
+|`PgUp` / `PgDn`|Scroll Log Streamer History|
+|`t`|Open Deep Engine Tuner|
+|`Tab`|Cycle Config Tuner Pages|
+|`Enter`|Apply Config Tuner Settings|
 |`m`|Open Target Model Selector|
 |`i`|Focus API Interrogator (Insert Mode)|
 |`Esc`|Exit Insert Mode|
 |`Up` / `Down`|Cycle API Payload History (While in Insert Mode)|
-|`Tab`|Cycle Config Tuner Pages|
-|`Enter`|Apply Config Tuner Settings|
 |`g`|Toggle GPU Hardware Inspector|
 |`c`|Toggle CPU/System Hardware Inspector|
-|`S`/`X`/`R` (Shift)|Daemon Start / Stop / Restart|
+|`Shift + S/X/R`|Daemon Start / Stop / Restart|
 |`Ctrl+D`|Tactical Crash Dump (Save state to file)|
 |`Ctrl+K`|Tactical Kill-Switch (`killall -9 llama-server`)|
 
@@ -133,8 +135,8 @@ default_ctx = 8192
 - **Permission Transparency**: This tool uses `sudo -n` for background operations. You must launch the TUI itself with `sudo` to allow hotkeys like **Restart** and **Kill-Switch** to execute without interactive password prompts.
     
 - **GPU Detection**: If no NVIDIA GPU is detected, Saltnitor will gracefully disable VRAM saturation gauges and the GPU Inspector while maintaining full CPU/RAM monitoring.
-
-- **History File**: The API console history is saved to `.saltnitor_history` in the working directory on exit.
+    
+- **Terminal Sizing Guardrails**: Saltnitor requires a minimum terminal footprint of 80x24. If the window is resized below this threshold, rendering will halt to prevent mathematical panics.
     
 
 ## 🛡 License
