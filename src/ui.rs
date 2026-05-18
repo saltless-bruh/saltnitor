@@ -488,7 +488,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ];
 
         let popup_block = Paragraph::new(help_text)
-            .block(Block::default().title(" Saltnitor Command Manual ").title_bottom(Line::from(Span::styled(" Press [?] or [Esc] to close ", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Right)).borders(Borders::ALL).style(Style::default().fg(Color::Yellow)))
+            .block(Block::default().title(" Saltnitor Command Manual ").title_bottom(Line::from(Span::styled(" Press [h] or [Esc] to close ", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Right)).borders(Borders::ALL).style(Style::default().fg(Color::Yellow)))
             .alignment(ratatui::layout::Alignment::Left);
 
         f.render_widget(popup_block, area);
