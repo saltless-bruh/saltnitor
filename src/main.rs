@@ -362,7 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
                                 KeyCode::Down => {
                                     // Limit bounds based on the active page
-                                    let max_idx = match app.tuner_page { 0 => 9, 1 => 4, 2 => 4, _ => 0 };
+                                    let max_idx = match app.tuner_page { 0 => 9, 1 => 6, 2 => 4, _ => 0 };
                                     if app.tuner_selected < max_idx { app.tuner_selected += 1; }
                                 }
                                 KeyCode::Left | KeyCode::Right => {
@@ -387,6 +387,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             2 => if is_right && app.defrag_thold < 1.0 { app.defrag_thold += 0.1; } else if !is_right && app.defrag_thold > -1.0 { app.defrag_thold -= 0.1; },
                                             3 => if is_right { app.draft_max += 1; } else if !is_right && app.draft_max > 1 { app.draft_max -= 1; },
                                             4 => if is_right { app.draft_min += 1; } else if !is_right && app.draft_min > 1 { app.draft_min -= 1; },
+                                            5 => { app.prompt_cache = !app.prompt_cache; },
+                                            6 => { app.prompt_cache_all = !app.prompt_cache_all; },
                                             _ => {}
                                         },
                                         2 => match app.tuner_selected {
@@ -402,11 +404,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Enter => {
                                     let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
+                                    let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
+                                    let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
                                     let ini_content = format!(
-                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
                                         app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
                                         app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                        app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, app.temp, app.top_k, app.top_p
+                                        app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
                                     );
                                     app.add_log(format!(">>> DEEP CONFIG APPLIED: Page 1-3 Saved to router.ini"));
                                     app.show_tuner = false;

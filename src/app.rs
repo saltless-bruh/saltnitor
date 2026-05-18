@@ -67,6 +67,8 @@ pub struct App {
     pub defrag_thold: f32,
     pub draft_max: i32,
     pub draft_min: i32,
+    pub prompt_cache: bool,
+    pub prompt_cache_all: bool,
 
     // Page 3: Sampling Defaults
     pub temp: f32,
@@ -187,6 +189,8 @@ impl App {
             defrag_thold: -1.0, // -1 means disabled
             draft_max: 16,
             draft_min: 5,
+            prompt_cache: false,
+            prompt_cache_all: false,
 
             // P3
             temp: 0.8,
