@@ -20,13 +20,13 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     
     - **Model Selector (`m`)**: Scan and hot-swap GGUF models dynamically via the `llama-router` API. Automatically targets the active model for console payloads.
         
-    - **Config Tuner (`t`)**: Modify `ngl` (GPU Layers) and `ctx` (Context Size) on the fly with live updates to `router.ini`.
+    - **Config Tuner (`t`)**: A multi-page tuner (use `Tab`) for `ngl`, `ctx`, threading, batching, cache types, rope scaling, draft settings, and prompt-cache flags, with live updates to `router.ini`.
         
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
     
     - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
         
-    - **Command History**: Features a Bash-style history buffer allowing you to cycle through previous payloads using the `Up` and `Down` arrow keys, complete with inline cursor editing.
+    - **Command History**: Features a Bash-style history buffer allowing you to cycle through previous payloads using the `Up` and `Down` arrow keys, complete with inline cursor editing. History persists to `.saltnitor_history` on exit.
         
     - **Clean Response Parsing**: Automatically extracts, cleans, and wraps conversational AI text from raw OpenAI-compatible JSON responses.
         
@@ -37,6 +37,8 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     - **Crash Dumping (`Ctrl+D`)**: Instantly export a post-mortem snapshot of your exact system state (VRAM/RAM pressure, temperatures, active model, and the last 100 log lines) to a timestamped file during an Out-Of-Memory (OOM) event.
         
     - **Kill-Switch (`Ctrl+K`)**: A dedicated emergency binding to forcefully terminate rogue inference threads and clear hung ports.
+
+- **Sudo-Aware Configuration**: Loads `~/.config/saltnitor/config.toml` from the invoking user's home (even under `sudo`), with CLI overrides for host, port, and service name.
         
 
 ## 🛠 Prerequisites
@@ -82,6 +84,28 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     sudo cp ./target/release/saltnitor /usr/local/bin/
     sudo saltnitor
     ```
+
+## ⚙️ Configuration
+
+Saltnitor merges CLI arguments with a TOML config file. When run under `sudo`, it still resolves the config from the invoking user's home directory via `SUDO_USER`.
+
+**CLI flags**
+
+```
+--host <host>
+--port <port>
+--service-name <name>
+```
+
+**Config file** (`~/.config/saltnitor/config.toml`)
+
+```
+port = 8080
+host = "127.0.0.1"
+service_name = "llama-router"
+default_ngl = 33
+default_ctx = 8192
+```
     
 
 ## ⌨️ Quick Reference
@@ -94,6 +118,8 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
 |`i`|Focus API Interrogator (Insert Mode)|
 |`Esc`|Exit Insert Mode|
 |`Up` / `Down`|Cycle API Payload History (While in Insert Mode)|
+|`Tab`|Cycle Config Tuner Pages|
+|`Enter`|Apply Config Tuner Settings|
 |`g`|Toggle GPU Hardware Inspector|
 |`c`|Toggle CPU/System Hardware Inspector|
 |`S`/`X`/`R` (Shift)|Daemon Start / Stop / Restart|
@@ -107,6 +133,8 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
 - **Permission Transparency**: This tool uses `sudo -n` for background operations. You must launch the TUI itself with `sudo` to allow hotkeys like **Restart** and **Kill-Switch** to execute without interactive password prompts.
     
 - **GPU Detection**: If no NVIDIA GPU is detected, Saltnitor will gracefully disable VRAM saturation gauges and the GPU Inspector while maintaining full CPU/RAM monitoring.
+
+- **History File**: The API console history is saved to `.saltnitor_history` in the working directory on exit.
     
 
 ## 🛡 License
