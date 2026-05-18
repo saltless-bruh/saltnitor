@@ -280,7 +280,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 text.push(Line::from(Span::styled(format!("  KV Cache (V-Type):      {:<8} [< / >]  ", cache_types[app.cache_v_idx]), s(9))).alignment(ratatui::layout::Alignment::Center));
             },
             1 => {
-                text.push(Line::from(Span::styled(" --- [ PAGE 2: CONTEXT & SPECULATION ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(" --- [ PAGE 2: CONTEXT & CACHING ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
                 text.push(Line::from(Span::styled(format!("  RoPE Freq Base:         {:<8} [< / >]  ", app.rope_base), s(0))).alignment(ratatui::layout::Alignment::Center));
                 text.push(Line::from(Span::styled(format!("  RoPE Scale Factor:      {:<8.2} [< / >]  ", app.rope_scale), s(1))).alignment(ratatui::layout::Alignment::Center));
                 text.push(Line::from(Span::styled(format!("  Defrag Threshold:       {:<8.2} [< / >]  ", app.defrag_thold), s(2))).alignment(ratatui::layout::Alignment::Center));
@@ -288,9 +288,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 text.push(Line::from(Span::styled(format!("  Draft Min Tokens:       {:<8} [< / >]  ", app.draft_min), s(4))).alignment(ratatui::layout::Alignment::Center));
                 text.push(Line::from(Span::styled(format!("  Prompt Cache (Disk):    {:<8} [< / >]  ", on_off(app.prompt_cache)), s(5))).alignment(ratatui::layout::Alignment::Center));
                 text.push(Line::from(Span::styled(format!("  Cache All (Chat Hist):  {:<8} [< / >]  ", on_off(app.prompt_cache_all)), s(6))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from("")); // Spacers to maintain box height
-                text.push(Line::from(""));
-                text.push(Line::from(""));
+                text.push(Line::from("")); // Reduced spacers from 5 to 3 to maintain exact box height
                 text.push(Line::from(""));
                 text.push(Line::from(""));
             },
@@ -460,7 +458,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         f.render_widget(Paragraph::new(proc_text), chunks[2]);
     }
-
 
     // 11. Interactive Help Overlay
     if app.show_help {
