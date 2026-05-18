@@ -300,13 +300,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let status_msg = if let Ok(out) = output {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let port_str = port_e.to_string();
-                
+
                 if stdout.trim().is_empty() || !stdout.contains(&port_str) {
                     format!("Port {}: OFFLINE (Daemon Down)", port_e)
                 } else if stdout.contains("llama-server") || stdout.contains("llama-se") {
                     format!("Port {}: SECURE (llama-server bound)", port_e)
                 } else {
-                    format!("Port {}: ZOMBIE THREAD DETECTED!", port_e)
+                    // --- UPGRADED LOGIC: Extract the actual process name ---
+                    let mut proc_name = "UNKNOWN (Requires Sudo?)".to_string();
+                    if let Some(users_idx) = stdout.find("users:((\"") {
+                        let start = users_idx + 9;
+                        if let Some(end) = stdout[start..].find('\"') {
+                            proc_name = stdout[start..start+end].to_string();
+                        }
+                    }
+                    format!("Port {}: BLOCKED BY [{}]", port_e, proc_name)
                 }
             } else {
                 format!("Port {}: AUDIT ERROR", port_e)
