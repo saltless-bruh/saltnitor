@@ -2,6 +2,7 @@ mod app;
 mod events;
 mod ui;
 
+use serde::Deserialize;
 use app::App;
 use events::Event;
 use crossterm::{
@@ -24,23 +25,65 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// The port the AI daemon is running on
-    #[arg(short, long, default_value_t = 8080)]
-    port: u16,
+    #[arg(short, long)]
+    port: Option<u16>, // Changed to Option so we know if the user explicitly typed it
 
-    /// The host address of the AI daemon
-    #[arg(long, default_value = "127.0.0.1")]
-    host: String,
+    #[arg(long)]
+    host: Option<String>,
 
-    /// The systemd service name for the AI daemon
-    #[arg(short, long, default_value = "llama-router")]
-    service_name: String,
+    #[arg(short, long)]
+    service_name: Option<String>,
+}
+
+// --- NEW: TOML Configuration Struct ---
+#[derive(Deserialize, Default, Debug)]
+struct TomlConfig {
+    port: Option<u16>,
+    host: Option<String>,
+    service_name: Option<String>,
+    default_ngl: Option<i32>,
+    default_ctx: Option<i32>,
+}
+
+// --- NEW: Sudo-Aware Config Loader ---
+fn load_config() -> TomlConfig {
+    let mut config_path = std::path::PathBuf::new();
+    
+    // Intelligently bypass the Sudo Trap
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        config_path.push(format!("/home/{}/.config/saltnitor/config.toml", sudo_user));
+    } else if let Some(home) = std::env::var_os("HOME") {
+        config_path.push(home);
+        config_path.push(".config/saltnitor/config.toml");
+    } else {
+        return TomlConfig::default();
+    }
+
+    if let Ok(content) = std::fs::read_to_string(config_path) {
+        toml::from_str(&content).unwrap_or_default()
+    } else {
+        TomlConfig::default()
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 0. Parse Command Line Arguments
     let cli = Cli::parse();
+    let toml_conf = load_config();
+
+    // 1. Load Configuration
+    let final_port = cli.port.or(toml_conf.port).unwrap_or(8080);
+    let final_host = cli
+        .host
+        .or(toml_conf.host)
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let final_svc = cli
+        .service_name
+        .or(toml_conf.service_name)
+        .unwrap_or_else(|| "llama-router".to_string());
+    let final_ngl = toml_conf.default_ngl.unwrap_or(33);
+    let final_ctx = toml_conf.default_ctx.unwrap_or(8192);
 
     // 1. Pre-Flight Hardware Scan
     let mut sys = System::new_all();
@@ -82,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 3. Application State & Channels
     let mut app = App::new(
         cpu_name, cpu_core_count, ram_total, gpu_name, vram_total, has_nvidia,
-        cli.host.clone(), cli.port, cli.service_name.clone()
+        final_host.clone(), final_port, final_svc.clone(), final_ngl, final_ctx
     );
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
@@ -198,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Task C: Journalctl Log Streamer
-    let service_c = cli.service_name.clone();
+    let service_c = final_svc.clone();
     tokio::spawn(async move {
         // Stream the dynamic service logs asynchronously
         let mut child = Command::new("journalctl")
@@ -219,8 +262,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Task D: Background Model Discovery
     let tx_models = tx.clone();
-    let host_d = cli.host.clone();
-    let port_d = cli.port;
+    let host_d = final_host.clone();
+    let port_d = final_port;
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         loop {
@@ -243,7 +286,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Task E: Background Session & Port Auditor
     let tx_port = tx.clone();
-    let port_e = cli.port;
+    let port_e = final_port;
     tokio::spawn(async move {
         loop {
             // Use 'ss' to dynamically look for processes holding our target port
@@ -309,22 +352,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 _ => {}
                             }
                         } else if app.show_tuner {
-                            // --- TUNER MENU CONTROLS ---
+                            // --- DEEP TUNER MENU CONTROLS ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
-                                KeyCode::Up => app.tuner_selected = 0,
-                                KeyCode::Down => app.tuner_selected = 1,
-                                KeyCode::Left => {
-                                    if app.tuner_selected == 0 && app.current_ngl > 0 { app.current_ngl -= 1; }
-                                    if app.tuner_selected == 1 && app.current_ctx > 1024 { app.current_ctx -= 1024; }
+                                KeyCode::Tab => {
+                                    app.tuner_page = (app.tuner_page + 1) % 3; // Cycle 0, 1, 2
+                                    app.tuner_selected = 0; // Reset cursor to top
                                 }
-                                KeyCode::Right => {
-                                    if app.tuner_selected == 0 && app.current_ngl < 99 { app.current_ngl += 1; }
-                                    if app.tuner_selected == 1 && app.current_ctx < 131072 { app.current_ctx += 1024; }
+                                KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
+                                KeyCode::Down => {
+                                    // Limit bounds based on the active page
+                                    let max_idx = match app.tuner_page { 0 => 9, 1 => 4, 2 => 4, _ => 0 };
+                                    if app.tuner_selected < max_idx { app.tuner_selected += 1; }
+                                }
+                                KeyCode::Left | KeyCode::Right => {
+                                    let is_right = key.code == KeyCode::Right;
+                                    match app.tuner_page {
+                                        0 => match app.tuner_selected {
+                                            0 => if is_right && app.current_ngl < 99 { app.current_ngl += 1; } else if !is_right && app.current_ngl > 0 { app.current_ngl -= 1; },
+                                            1 => if is_right && app.current_ctx < 131072 { app.current_ctx += 1024; } else if !is_right && app.current_ctx > 1024 { app.current_ctx -= 1024; },
+                                            2 => if is_right && app.current_threads < app.cpu_core_count { app.current_threads += 1; } else if !is_right && app.current_threads > 1 { app.current_threads -= 1; },
+                                            3 => if is_right && app.current_batch < 8192 { app.current_batch *= 2; } else if !is_right && app.current_batch > 128 { app.current_batch /= 2; },
+                                            4 => if is_right && app.current_parallel < 16 { app.current_parallel += 1; } else if !is_right && app.current_parallel > 1 { app.current_parallel -= 1; },
+                                            5 => { app.flash_attn = !app.flash_attn; },
+                                            6 => { app.mlock = !app.mlock; },
+                                            7 => { app.no_mmap = !app.no_mmap; },
+                                            8 => if is_right && app.cache_k_idx < 3 { app.cache_k_idx += 1; } else if !is_right && app.cache_k_idx > 0 { app.cache_k_idx -= 1; },
+                                            9 => if is_right && app.cache_v_idx < 3 { app.cache_v_idx += 1; } else if !is_right && app.cache_v_idx > 0 { app.cache_v_idx -= 1; },
+                                            _ => {}
+                                        },
+                                        1 => match app.tuner_selected {
+                                            0 => if is_right { app.rope_base += 10000; } else if !is_right && app.rope_base > 10000 { app.rope_base -= 10000; },
+                                            1 => if is_right { app.rope_scale += 0.5; } else if !is_right && app.rope_scale > 1.0 { app.rope_scale -= 0.5; },
+                                            2 => if is_right && app.defrag_thold < 1.0 { app.defrag_thold += 0.1; } else if !is_right && app.defrag_thold > -1.0 { app.defrag_thold -= 0.1; },
+                                            3 => if is_right { app.draft_max += 1; } else if !is_right && app.draft_max > 1 { app.draft_max -= 1; },
+                                            4 => if is_right { app.draft_min += 1; } else if !is_right && app.draft_min > 1 { app.draft_min -= 1; },
+                                            _ => {}
+                                        },
+                                        2 => match app.tuner_selected {
+                                            0 => if is_right && app.temp < 2.0 { app.temp += 0.1; } else if !is_right && app.temp > 0.0 { app.temp -= 0.1; },
+                                            1 => if is_right { app.top_k += 5; } else if !is_right && app.top_k > 0 { app.top_k -= 5; },
+                                            2 => if is_right && app.top_p < 1.0 { app.top_p += 0.05; } else if !is_right && app.top_p > 0.0 { app.top_p -= 0.05; },
+                                            3 => if is_right && app.min_p < 1.0 { app.min_p += 0.05; } else if !is_right && app.min_p > 0.0 { app.min_p -= 0.05; },
+                                            4 => if is_right && app.rep_pen < 2.0 { app.rep_pen += 0.05; } else if !is_right && app.rep_pen > 1.0 { app.rep_pen -= 0.05; },
+                                            _ => {}
+                                        },
+                                        _ => {}
+                                    }
                                 }
                                 KeyCode::Enter => {
-                                    let ini_content = format!("[model]\nngl = {}\nctx-size = {}\n", app.current_ngl, app.current_ctx);
-                                    app.add_log(format!(">>> ROUTER CONFIG UPDATED: ngl={}, ctx={}", app.current_ngl, app.current_ctx));
+                                    let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
+                                    let ini_content = format!(
+                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
+                                        app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
+                                        app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, app.temp, app.top_k, app.top_p
+                                    );
+                                    app.add_log(format!(">>> DEEP CONFIG APPLIED: Page 1-3 Saved to router.ini"));
                                     app.show_tuner = false;
                                     tokio::spawn(async move { let _ = tokio::fs::write("router.ini", ini_content).await; });
                                 }
@@ -496,6 +580,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 _ => {}
                             }
+                        } else if app.show_help {
+                            // --- HELP OVERLAY CONTROLS ---
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => app.show_help = false,
+                                _ => {}
+                            }
                         } else {
                             // --- MAIN DASHBOARD CONTROLS ---
                             match key.code {
@@ -505,6 +595,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('m') => app.show_model_selector = true,
                                 KeyCode::Char('g') => { app.show_gpu_inspector = !app.show_gpu_inspector; app.show_sys_inspector = false; },
                                 KeyCode::Char('c') => { app.show_sys_inspector = !app.show_sys_inspector; app.show_gpu_inspector = false; },
+                                KeyCode::Char('h') => app.show_help = true,
                                 KeyCode::PageUp => app.scroll_logs_up(),
                                 KeyCode::PageDown => app.scroll_logs_down(),
                                 

@@ -46,9 +46,37 @@ pub struct App {
 
     // Config Tuner State
     pub show_tuner: bool,
-    pub tuner_selected: usize, // 0 = NGL, 1 = Context Size
+    pub tuner_page: usize,     // <-- NEW: Tracks [Page 1], [Page 2], or [Page 3]
+    pub tuner_selected: usize, 
+    
+    // Page 1: Compute & Memory
     pub current_ngl: i32,
     pub current_ctx: i32,
+    pub current_threads: usize,
+    pub current_batch: i32,
+    pub current_parallel: i32,
+    pub flash_attn: bool,
+    pub mlock: bool,
+    pub no_mmap: bool,
+    pub cache_k_idx: usize,
+    pub cache_v_idx: usize,
+
+    // Page 2: Context & Speculation
+    pub rope_base: i32,
+    pub rope_scale: f32,
+    pub defrag_thold: f32,
+    pub draft_max: i32,
+    pub draft_min: i32,
+
+    // Page 3: Sampling Defaults
+    pub temp: f32,
+    pub top_k: i32,
+    pub top_p: f32,
+    pub min_p: f32,
+    pub rep_pen: f32,
+
+    // Help Menu State
+    pub show_help: bool,
 
     // API Interrogator State
     pub console_focused: bool,
@@ -86,7 +114,9 @@ impl App {
         has_nvidia: bool,
         host: String,
         port: u16,
-        service_name: String
+        service_name: String,
+        default_ngl: i32,
+        default_ctx: i32
     ) -> Self {
         let mut log_state = ListState::default();
         log_state.select(Some(0));
@@ -136,9 +166,35 @@ impl App {
             // CONF
             logs: VecDeque::with_capacity(100),
             show_tuner: false,
+            tuner_page: 0,
             tuner_selected: 0,
-            current_ngl: 33,   // Safe default to fit an 8B model entirely in the RTX 3060
-            current_ctx: 8192, // Standard context window
+            
+            // P1
+            current_ngl: default_ngl,
+            current_ctx: default_ctx,
+            current_threads: cpu_core_count.saturating_sub(1).max(1),
+            current_batch: 512,
+            current_parallel: 1,
+            flash_attn: false,
+            mlock: false,
+            no_mmap: false,
+            cache_k_idx: 0,
+            cache_v_idx: 0,
+
+            // P2
+            rope_base: 10000,
+            rope_scale: 1.0,
+            defrag_thold: -1.0, // -1 means disabled
+            draft_max: 16,
+            draft_min: 5,
+
+            // P3
+            temp: 0.8,
+            top_k: 40,
+            top_p: 0.95,
+            min_p: 0.05,
+            rep_pen: 1.1,
+
             console_focused: false,
             console_input: r#"{"model": "None", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(),
             console_cursor: 69,
@@ -155,7 +211,7 @@ impl App {
             port_status,
             log_state,
             auto_scroll: true,
-            
+            show_help: false,
             swap_used: 0.0,
             swap_total: 1.0,
             sys_processes: Vec::new(),

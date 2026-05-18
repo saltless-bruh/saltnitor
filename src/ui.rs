@@ -27,7 +27,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Constraint::Length(6), // Telemetry area
             Constraint::Min(0),     // Log area expands to fill the middle
             Constraint::Length(5),  // API Interrogator area
-            Constraint::Length(3),  // Hotkeys panel at the very bottom
+            Constraint::Length(3),
         ])
         .split(f.area());
 
@@ -140,15 +140,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Style::default().fg(Color::DarkGray)
     };
 
-    // --- Create a bottom-right aligned title for the port status ---
-    let port_title = Line::from(vec![
-        Span::raw("[ "),
-        Span::styled(&app.port_status, port_style),
-        Span::raw(" ]"),
-    ]).alignment(ratatui::layout::Alignment::Right);
+    let logs_title = Line::from(Span::styled(
+        " Intelligent Log Analyzer ",
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    ));
 
-    let logs_title = format!(" {} systemd logs ", app.service_name);
-    
+    let port_title = Line::from(vec![
+        Span::raw(" [Port: "),
+        Span::styled(&app.port_status, port_style),
+        Span::raw("] "),
+    ])
+    .alignment(ratatui::layout::Alignment::Right);
+
     // --- Inject title_bottom into the Block ---
     let logs_list = List::new(log_items)
         .block(
@@ -236,59 +239,81 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     
     f.render_widget(console_block, main_chunks[2]);
 
-    // 6.5 Command Center Hotkeys Legend
-    let hotkeys_text = Line::from(vec![
-        Span::styled("[q] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Quit  |  "),
-        Span::styled("[t] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Tuner  |  "),
-        Span::styled("[m] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Models  |  "),
-        Span::styled("[i] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("API Mode  |  "),
-        Span::styled("[PgUp/Dn] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Scroll  |  "),
-        Span::styled("[g/c] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Hardware Inspectors  |  "),
-        Span::styled("[Shift+S/X/R] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("Daemon Start/Stop/Restart  |  "),
-        Span::styled("[Ctrl+D] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        Span::raw("Crash Dump  |  "),
-        Span::styled("[Ctrl+K] ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        Span::raw("Kill-Switch"),
+    // 6.5 Core Quick Reference (Restored & Minimal)
+    let core_hotkeys = Line::from(vec![
+        Span::styled(" [q] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Quit  |"),
+        Span::styled(" [h] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Full Help Menu  |"),
+        Span::styled(" [t] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Deep Tuner  |"),
+        Span::styled(" [m] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Models  |"),
+        Span::styled(" [i] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("API Console"),
     ]);
 
-    let hotkeys_block = Paragraph::new(hotkeys_text)
-        .block(Block::default().title(" Quick Reference ").borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)))
+    let hotkeys_block = Paragraph::new(core_hotkeys)
+        .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)))
         .alignment(ratatui::layout::Alignment::Center);
-    
     f.render_widget(hotkeys_block, main_chunks[3]);
 
     // 7. Dynamic Config Tuner (Popup Overlay)
     if app.show_tuner {
-        // --- NEW: Use absolute sizing to wrap tightly (45 chars wide, 7 rows tall) ---
-        let area = centered_rect_absolute(45, 7, f.area());
-        
-        // Clear the background behind the popup
+        let area = centered_rect_absolute(58, 17, f.area()); 
         f.render_widget(Clear, area); 
 
-        // Highlight the currently selected option
-        let ngl_style = if app.tuner_selected == 0 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
-        let ctx_style = if app.tuner_selected == 1 { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Gray) };
+        let s = |idx| if app.tuner_selected == idx { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED) } else { Style::default().fg(Color::Gray) };
+        let on_off = |b| if b { "ON " } else { "OFF" };
+        let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
 
-        // --- NEW: Removed extra blank lines to fit the snug box ---
-        let text = vec![
-            Line::from(""),
-            Line::from(Span::styled(format!("> GPU Layers (ngl): {}  [< / >]", app.current_ngl), ngl_style)),
-            Line::from(Span::styled(format!("> Context Size (ctx): {}  [< / >]", app.current_ctx), ctx_style)),
-            Line::from(""),
-            Line::from(Span::styled("[ENTER] Save & Apply   |   [ESC] Cancel", Style::default().fg(Color::DarkGray))),
-        ];
+        let mut text = vec![Line::from("")];
 
-        // --- NEW: Center-align the text inside the tightly wrapped box ---
+        // DYNAMIC PAGE RENDERING
+        match app.tuner_page {
+            0 => {
+                text.push(Line::from(Span::styled(" --- [ PAGE 1: COMPUTE & MEMORY ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  GPU Layers (ngl):       {:<8} [< / >]  ", app.current_ngl), s(0))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Context Size (ctx):     {:<8} [< / >]  ", app.current_ctx), s(1))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  CPU Threads (threads):  {:<8} [< / >]  ", app.current_threads), s(2))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Batch Size (n_batch):   {:<8} [< / >]  ", app.current_batch), s(3))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Parallel Slots (np):    {:<8} [< / >]  ", app.current_parallel), s(4))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Flash Attention:        {:<8} [< / >]  ", on_off(app.flash_attn)), s(5))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Memory Lock (mlock):    {:<8} [< / >]  ", on_off(app.mlock)), s(6))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  No Mem Map (no_mmap):   {:<8} [< / >]  ", on_off(app.no_mmap)), s(7))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  KV Cache (K-Type):      {:<8} [< / >]  ", cache_types[app.cache_k_idx]), s(8))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  KV Cache (V-Type):      {:<8} [< / >]  ", cache_types[app.cache_v_idx]), s(9))).alignment(ratatui::layout::Alignment::Center));
+            },
+            1 => {
+                text.push(Line::from(Span::styled(" --- [ PAGE 2: CONTEXT & SPECULATION ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  RoPE Freq Base:         {:<8} [< / >]  ", app.rope_base), s(0))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  RoPE Scale Factor:      {:<8.2} [< / >]  ", app.rope_scale), s(1))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Defrag Threshold:       {:<8.2} [< / >]  ", app.defrag_thold), s(2))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Draft Max Tokens:       {:<8} [< / >]  ", app.draft_max), s(3))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Draft Min Tokens:       {:<8} [< / >]  ", app.draft_min), s(4))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from("")); // Spacers to maintain box height
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+            },
+            2 => {
+                text.push(Line::from(Span::styled(" --- [ PAGE 3: DEFAULT SAMPLING ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Temperature:            {:<8.2} [< / >]  ", app.temp), s(0))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Top-K:                  {:<8} [< / >]  ", app.top_k), s(1))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Top-P:                  {:<8.2} [< / >]  ", app.top_p), s(2))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Min-P:                  {:<8.2} [< / >]  ", app.min_p), s(3))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from(Span::styled(format!("  Repeat Penalty:         {:<8.2} [< / >]  ", app.rep_pen), s(4))).alignment(ratatui::layout::Alignment::Center));
+                text.push(Line::from("")); // Spacers
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+                text.push(Line::from(""));
+            },
+            _ => {}
+        }
+
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled("[TAB] Next Page   |   [ENTER] Apply   |   [ESC] Cancel", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Center));
+
+        let title = format!(" Deep router.ini Tuner [Page {}/3] ", app.tuner_page + 1);
         let popup_block = Paragraph::new(text)
-            .block(Block::default().title(" router.ini Tuner ").borders(Borders::ALL).style(Style::default().fg(Color::Cyan)))
-            .alignment(ratatui::layout::Alignment::Center);
+            .block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(Color::Cyan)));
         
         f.render_widget(popup_block, area);
     }
@@ -432,6 +457,41 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             proc_text.push(Line::from(format!("  • {:<25} | {:.2} GB", name, mem)));
         }
         f.render_widget(Paragraph::new(proc_text), chunks[2]);
+    }
+
+
+    // 11. Interactive Help Overlay
+    if app.show_help {
+        let area = centered_rect_absolute(65, 20, f.area());
+        f.render_widget(Clear, area);
+
+        let help_text = vec![
+            Line::from(""),
+            Line::from(Span::styled(" --- Navigation & Display ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  [q] Quit        | [PgUp/PgDn] Scroll Logs"),
+            Line::from("  [g] GPU Metrics | [c] CPU & RAM Metrics"),
+            Line::from(""),
+            Line::from(Span::styled(" --- Orchestration & Tuning ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  [m] Target Model Selector"),
+            Line::from("  [t] Config Tuner (ngl, ctx, threads, batch, parallel)"),
+            Line::from("  [i] API Interrogator (Press Esc to exit Insert Mode)"),
+            Line::from("  [Up/Dn] Cycle Interrogator Payload History"),
+            Line::from(""),
+            Line::from(Span::styled(" --- Daemon Control (Requires Sudo) ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  [Shift+S] Start Daemon   | [Shift+X] Stop Daemon"),
+            Line::from("  [Shift+R] Restart Daemon"),
+            Line::from(""),
+            Line::from(Span::styled(" --- Tactical Response ---", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+            Line::from("  [Ctrl+D] Crash Dump (Snapshot telemetry to file)"),
+            Line::from("  [Ctrl+K] Kill-Switch (Force-kill llama-server)"),
+            Line::from(""),
+        ];
+
+        let popup_block = Paragraph::new(help_text)
+            .block(Block::default().title(" Saltnitor Command Manual ").title_bottom(Line::from(Span::styled(" Press [?] or [Esc] to close ", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Right)).borders(Borders::ALL).style(Style::default().fg(Color::Yellow)))
+            .alignment(ratatui::layout::Alignment::Left);
+
+        f.render_widget(popup_block, area);
     }
 }
 
