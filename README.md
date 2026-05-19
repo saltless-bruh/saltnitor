@@ -30,15 +30,15 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
     - **Deep Engine Tuner (`t`)**: A paginated, 3-panel configuration manifest (cycle with `Tab`) allowing live, on-the-fly injection of advanced `llama.cpp` parameters directly to `router.ini`:
         
         - _Page 1 (Compute & Memory)_: `ngl`, `ctx`, threads, batching, parallel slots, Flash Attention, mlock, no_mmap, and KV Cache quantization.
-          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/b7678cfb-d16c-4848-ae47-b6986f09e9c1" />
+      <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/b7678cfb-d16c-4848-ae47-b6986f09e9c1" />
 
             
         - _Page 2 (Context & Caching)_: RoPE scaling, defragmentation thresholds, speculative decoding (Draft tokens), and persistent Prompt Caching to SSD.
-          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/cf2c45cc-2efb-4cf6-8af8-89e31c803ce3" />
+      <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/cf2c45cc-2efb-4cf6-8af8-89e31c803ce3" />
 
             
         - _Page 3 (Default Sampling)_: Temperature, Top-K, Top-P, Min-P, and Repetition Penalties.
-          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/0291d190-7349-454a-99a4-ffdf369b0f0a" />
+      <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/0291d190-7349-454a-99a4-ffdf369b0f0a" />
 
             
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
