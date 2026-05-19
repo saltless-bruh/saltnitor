@@ -44,6 +44,10 @@ pub struct App {
     pub gpu_clocks: String,
     pub sys_uptime: u64,
 
+    // Search State
+    pub is_searching: bool,
+    pub search_query: String,
+
     // Config Tuner State
     pub show_tuner: bool,
     pub tuner_page: usize,     // <-- NEW: Tracks [Page 1], [Page 2], or [Page 3]
@@ -216,6 +220,8 @@ impl App {
             log_state,
             auto_scroll: true,
             show_help: false,
+            is_searching: false,
+            search_query: String::new(),
             swap_used: 0.0,
             swap_total: 1.0,
             sys_processes: Vec::new(),

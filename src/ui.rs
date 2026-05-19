@@ -113,10 +113,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .max(100);
     f.render_widget(cpu_sparkline, top_chunks[1]);
 
-    // 5. Intelligent Log Analyzer (List Widget)
-    let log_items: Vec<ListItem> = app
-        .logs
-        .iter()
+   // 5. Intelligent Log Analyzer (List Widget)
+    // --- NEW: Filter logs based on search query ---
+    let filtered_logs: Vec<&String> = app.logs.iter().filter(|log| {
+        if app.search_query.is_empty() {
+            true
+        } else {
+            log.to_lowercase().contains(&app.search_query.to_lowercase())
+        }
+    }).collect();
+
+    let log_items: Vec<ListItem> = filtered_logs
+        .into_iter()
         .map(|log| {
             let style = if log.contains("OOM") || log.contains("Failed") || log.contains("error") {
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
@@ -140,10 +148,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let logs_title = Line::from(Span::styled(
-        " Intelligent Log Analyzer ",
-        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-    ));
+    // --- NEW: Dynamic Title for Search Bar ---
+    let logs_title = if app.is_searching {
+        Line::from(vec![
+            Span::styled(" Log Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}█", app.search_query), Style::default().fg(Color::Cyan).add_modifier(Modifier::RAPID_BLINK)),
+        ])
+    } else if !app.search_query.is_empty() {
+        Line::from(Span::styled(format!(" Logs (Filtered: {}) - Press '/' to edit ", app.search_query), Style::default().fg(Color::Yellow)))
+    } else {
+        Line::from(Span::styled(" Intelligent Log Analyzer ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
+    };
 
     let port_title = Line::from(vec![
         Span::raw(" [Port: "),
@@ -152,7 +167,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .alignment(ratatui::layout::Alignment::Right);
 
-    // --- Inject title_bottom into the Block ---
     let logs_list = List::new(log_items)
         .block(
             Block::default()
@@ -163,7 +177,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED).fg(Color::Cyan))
         .highlight_symbol(">> ");
     
-    f.render_stateful_widget(logs_list, main_chunks[1], &mut app.log_state);
+    f.render_stateful_widget(logs_list, main_chunks[1], &mut app.log_state); 
 
     // 6. API Interrogator (Mini-Console)
     let console_border_color = if app.console_focused { Color::Cyan } else { Color::DarkGray };
@@ -461,13 +475,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 11. Interactive Help Overlay
     if app.show_help {
-        let area = centered_rect_absolute(65, 20, f.area());
+        let area = centered_rect_absolute(65, 22, f.area());
         f.render_widget(Clear, area);
 
         let help_text = vec![
             Line::from(""),
             Line::from(Span::styled(" --- Navigation & Display ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  [q] Quit        | [PgUp/PgDn] Scroll Logs"),
+            Line::from("  [/] Search Logs | [Enter] Apply Search/Filter"),
             Line::from("  [g] GPU Metrics | [c] CPU & RAM Metrics"),
             Line::from(""),
             Line::from(Span::styled(" --- Orchestration & Tuning ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),

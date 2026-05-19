@@ -8,7 +8,7 @@ pub enum Event {
         vram_used: f64,
         ram_used: f64,
         cpu_load: u64,
-        // --- NEW FIELDS ---
+        // --- GPU Telemetry ---
         gpu_temp: i32,
         gpu_power: String,
         gpu_processes: Vec<(String, f64)>, // Name, VRAM (GB)
@@ -28,14 +28,11 @@ pub enum Event {
     Key(KeyEvent),
     /// A scheduled tick to force a UI refresh
     Tick,
-    // Add this new event:
-    ApiResponse {
-        ttft_ms: u128,
-        eval_tps: f64,
-        gen_tps: f64,
-        status: String,
-        message: String,
-    },
+    // --- Live Streaming Events ---
+    ApiStreamStart { ttft_ms: u128 },
+    ApiStreamChunk(String),
+    ApiStreamEnd { eval_tps: f64, gen_tps: f64, status: String },
+    
     ModelsFetched(Vec<String>),
     PortAudit(String),
-}
+} 

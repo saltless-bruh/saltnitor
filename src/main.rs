@@ -35,7 +35,7 @@ struct Cli {
     service_name: Option<String>,
 }
 
-// --- NEW: TOML Configuration Struct ---
+// --- TOML Configuration Struct ---
 #[derive(Deserialize, Default, Debug)]
 struct TomlConfig {
     port: Option<u16>,
@@ -45,7 +45,7 @@ struct TomlConfig {
     default_ctx: Option<i32>,
 }
 
-// --- NEW: Sudo-Aware Config Loader ---
+// --- Sudo-Aware Config Loader ---
 fn load_config() -> TomlConfig {
     let mut config_path = std::path::PathBuf::new();
     
@@ -64,6 +64,31 @@ fn load_config() -> TomlConfig {
     } else {
         TomlConfig::default()
     }
+}
+
+// --- Pre-Flight Dependency Checker ---
+fn check_dependencies() -> Result<(), String> {
+    let required_cmds = ["journalctl", "ss", "systemctl", "killall"];
+    let mut missing = Vec::new();
+
+    for cmd in required_cmds {
+        // Use the POSIX standard 'command -v' to safely check if a binary exists in the system PATH
+        let is_installed = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {}", cmd))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !is_installed {
+            missing.push(cmd);
+        }
+    }
+
+    if !missing.is_empty() {
+        return Err(format!("Missing critical Linux dependencies: {}", missing.join(", ")));
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -85,7 +110,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let final_ngl = toml_conf.default_ngl.unwrap_or(33);
     let final_ctx = toml_conf.default_ctx.unwrap_or(8192);
 
-    // 1. Pre-Flight Hardware Scan
+    // --- Enforce Pre-Flight Checks ---
+    if let Err(e) = check_dependencies() {
+        eprintln!("\n[!] SALTNITOR BOOT SEQUENCE HALTED");
+        eprintln!("[!] {}", e);
+        eprintln!("[!] Please install the required packages (e.g., 'iproute2', 'psmisc', 'systemd') and try again.\n");
+        std::process::exit(1);
+    }
+
+    // 2. Pre-Flight Hardware Scan
     let mut sys = System::new_all();
     sys.refresh_cpu_specifics(CpuRefreshKind::everything());
     sys.refresh_memory();
@@ -115,21 +148,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // 2. Terminal Initialization
+    // 3. Terminal Initialization
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 3. Application State & Channels
+    // 4. Application State & Channels
     let mut app = App::new(
         cpu_name, cpu_core_count, ram_total, gpu_name, vram_total, has_nvidia,
         final_host.clone(), final_port, final_svc.clone(), final_ngl, final_ctx
     );
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
-    // 4. Start Event Producers (Background Tasks)
+    // 5. Start Event Producers (Background Tasks)
     let tx_keys = tx.clone();
     let tx_logs = tx.clone();
 
@@ -477,7 +510,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                                 KeyCode::Enter => {
-                                    // --- NEW: Add to History Buffer ---
+                                    // --- Add to History Buffer ---
                                     if !app.console_input.trim().is_empty() {
                                         if app.console_history.is_empty() || app.console_history.last() != Some(&app.console_input) {
                                             app.console_history.push(app.console_input.clone());
@@ -504,88 +537,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let start = Instant::now();
                                         let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
                                         
+                                        // --- Secretly inject "stream": true into the user's payload ---
+                                        let mut payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
+                                        if let Some(obj) = payload_json.as_object_mut() {
+                                            obj.insert("stream".to_string(), serde_json::json!(true));
+                                        }
+                                        let stream_payload = payload_json.to_string();
+
                                         let response = client.post(&url)
                                             .header("Content-Type", "application/json")
-                                            .body(payload)
+                                            .body(stream_payload)
                                             .send()
                                             .await;
                                             
-                                        let _ttft_ms = start.elapsed().as_millis();
-                                        
                                         match response {
-                                            Ok(res) => {
+                                            Ok(mut res) => {
                                                 let status = res.status().to_string();
-                                                let text = res.text().await.unwrap_or_else(|_| "Failed to parse body".to_string());
-                                                
-                                                let total_time_ms = start.elapsed().as_millis();
-                                                
-                                                let mut eval_tps = 0.0;
-                                                let mut gen_tps = 0.0;
-                                                
-                                                // --- NEW: A variable to hold our clean, extracted AI response ---
-                                                let mut clean_response = text.clone(); 
-                                                
-                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                                    
-                                                    // --- NEW: Extract the actual readable text from the OpenAI JSON ---
-                                                    if let Some(content) = json.get("choices")
-                                                        .and_then(|c| c.get(0))
-                                                        .and_then(|c| c.get("message"))
-                                                        .and_then(|m| m.get("content"))
-                                                        .and_then(|c| c.as_str()) 
-                                                    {
-                                                        // Replace newlines with a symbol so it flows nicely in the dashboard
-                                                        clean_response = content.replace('\n', " ⏎ ").trim().to_string();
+                                                let mut first_token = true;
+                                                let mut total_tokens = 0.0;
+                                                let mut buffer = String::new();
+
+                                                // --- Read the SSE stream chunk by chunk in real-time ---
+                                                while let Ok(Some(chunk)) = res.chunk().await {
+                                                    if first_token {
+                                                        let ttft = start.elapsed().as_millis();
+                                                        let _ = tx_api.send(Event::ApiStreamStart { ttft_ms: ttft }).await;
+                                                        first_token = false;
                                                     }
 
-                                                    // 1. Try to parse exact llama.cpp timings
-                                                    if let Some(timings) = json.get("timings") {
-                                                        let p_n = timings.get("prompt_n").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                                        let p_ms = timings.get("prompt_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                                        let g_n = timings.get("predicted_n").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                                        let g_ms = timings.get("predicted_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                                        
-                                                        if p_ms > 0.0 { eval_tps = p_n / (p_ms / 1000.0); }
-                                                        if g_ms > 0.0 { gen_tps = g_n / (g_ms / 1000.0); }
-                                                    } else {
-                                                        // 2. Heuristic fallback
-                                                        let p_tok = json.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
-                                                        let c_tok = json.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|t| t.as_f64()).unwrap_or(0.0);
-                                                        
-                                                        let total_s = total_time_ms as f64 / 1000.0;
-                                                        if total_s > 0.0 {
-                                                            let weight_eval = p_tok * 1.0;
-                                                            let weight_gen = c_tok * 10.0;
-                                                            let total_weight = f64::max(weight_eval + weight_gen, 1.0);
+                                                    // Accumulate chunks and split by newlines safely
+                                                    buffer.push_str(&String::from_utf8_lossy(&chunk));
+                                                    while let Some(idx) = buffer.find('\n') {
+                                                        let line = buffer[..idx].trim().to_string();
+                                                        buffer = buffer[idx+1..].to_string();
+
+                                                        if line.starts_with("data: ") {
+                                                            let data = &line[6..];
+                                                            if data == "[DONE]" { continue; }
                                                             
-                                                            let eval_s = total_s * (weight_eval / total_weight);
-                                                            let gen_s = total_s * (weight_gen / total_weight);
-                                                            
-                                                            if eval_s > 0.0 { eval_tps = p_tok / eval_s; }
-                                                            if gen_s > 0.0 { gen_tps = c_tok / gen_s; }
+                                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                                if let Some(content) = json.get("choices")
+                                                                    .and_then(|c| c.get(0))
+                                                                    .and_then(|c| c.get("delta"))
+                                                                    .and_then(|d| d.get("content"))
+                                                                    .and_then(|c| c.as_str()) 
+                                                                {
+                                                                    let clean_token = content.replace('\n', " ⏎ ");
+                                                                    let _ = tx_api.send(Event::ApiStreamChunk(clean_token)).await;
+                                                                    total_tokens += 1.0;
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
-                                                
-                                                if gen_tps == 0.0 {
-                                                    let word_count = text.split_whitespace().count() as f64;
-                                                    let total_s = total_time_ms as f64 / 1000.0;
-                                                    if total_s > 0.0 {
-                                                        gen_tps = (word_count * 1.3) / total_s;
-                                                    }
-                                                }
 
-                                                // --- NEW: Remove the 80 character limit and use our clean text ---
-                                                let _ = tx_api.send(Event::ApiResponse { 
-                                                    ttft_ms: total_time_ms, 
-                                                    eval_tps, 
-                                                    gen_tps, 
-                                                    status, 
-                                                    message: clean_response // <-- Feed the parsed text here
-                                                }).await;
+                                                // Calculate generation speed
+                                                let total_time_s = start.elapsed().as_millis() as f64 / 1000.0;
+                                                let gen_tps = if total_time_s > 0.0 { total_tokens / total_time_s } else { 0.0 };
+                                                let eval_tps = 0.0; // Streaming obscures prompt eval times, so we omit it to avoid faking data
+
+                                                let _ = tx_api.send(Event::ApiStreamEnd { eval_tps, gen_tps, status }).await;
                                             }
                                             Err(e) => {
-                                                let _ = tx_api.send(Event::ApiResponse { ttft_ms: 0, eval_tps: 0.0, gen_tps: 0.0, status: "ERROR".to_string(), message: e.to_string() }).await;
+                                                let _ = tx_api.send(Event::ApiStreamChunk(format!("ERROR: {}", e))).await;
+                                                let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps: 0.0, status: "500".to_string() }).await;
                                             }
                                         }
                                     });
@@ -598,6 +613,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => app.show_help = false,
                                 _ => {}
                             }
+                        } else if app.is_searching {
+                            // --- NEW: LOG SEARCH CONTROLS ---
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Enter => app.is_searching = false,
+                                KeyCode::Backspace => { app.search_query.pop(); }
+                                KeyCode::Char(c) => { app.search_query.push(c); }
+                                _ => {}
+                            }
                         } else {
                             // --- MAIN DASHBOARD CONTROLS ---
                             match key.code {
@@ -607,6 +630,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('m') => app.show_model_selector = true,
                                 KeyCode::Char('g') => { app.show_gpu_inspector = !app.show_gpu_inspector; app.show_sys_inspector = false; },
                                 KeyCode::Char('c') => { app.show_sys_inspector = !app.show_sys_inspector; app.show_gpu_inspector = false; },
+                                KeyCode::Char('/') => { app.is_searching = true; app.search_query.clear(); },
                                 KeyCode::Char('h') => app.show_help = true,
                                 KeyCode::PageUp => app.scroll_logs_up(),
                                 KeyCode::PageDown => app.scroll_logs_down(),
@@ -676,17 +700,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    Event::ApiResponse { ttft_ms, eval_tps, gen_tps, status, message } => {
+                    // --- Live Streaming Event Handlers ---
+                    Event::ApiStreamStart { ttft_ms } => {
                         app.last_ttft = ttft_ms;
+                        app.last_api_result.clear(); // Clear the "Sending payload..." message
+                    }
+                    Event::ApiStreamChunk(token) => {
+                        app.last_api_result.push_str(&token); // Paint it to the screen instantly
+                    }
+                    Event::ApiStreamEnd { eval_tps, gen_tps, status } => {
                         app.last_eval_tps = eval_tps;
                         app.last_gen_tps = gen_tps;
-                        app.last_api_result = format!("[{}] {}", status, message);
-                        app.add_log(format!("API Strike: {}ms | Eval: {:.1} t/s | Gen: {:.1} t/s", ttft_ms, eval_tps, gen_tps));
+                        let final_msg = format!("[{}] {}", status, app.last_api_result.chars().take(30).collect::<String>());
+                        app.add_log(format!("API Strike: {}ms | Gen: {:.1} t/s | {}", app.last_ttft, gen_tps, final_msg));
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
                         
-                        // --- NEW: Auto-select the first model if we don't have one ---
+                        // --- Auto-select the first model if we don't have one ---
                         if app.active_model == "None" && !app.available_models.is_empty() {
                             let first_model = app.available_models[0].clone();
                             app.active_model = first_model.clone();
