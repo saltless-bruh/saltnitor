@@ -13,24 +13,37 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
 - **Tactical Hardware Inspectors**:
     
     - **GPU Deep-Dive (`g`)**: Real-time VRAM allocation, core temperatures, wattage draw, and fan speeds. Includes an active process list to identify exactly which external applications are dominating your VRAM.
-      <img width="479" height="406" alt="image" src="https://github.com/user-attachments/assets/9af04349-0cd8-4049-933d-f93626f706a5" />
+      <img width="467" height="401" alt="image" src="https://github.com/user-attachments/assets/c7610f56-9c38-47aa-9ddc-18fa97f29685" />
+
 
         
     - **CPU/System Deep-Dive (`c`)**: A dynamic graphical equalizer showing load distribution across all threads, total system uptime, and SSD Swap spillover metrics.
+      <img width="552" height="479" alt="image" src="https://github.com/user-attachments/assets/e3897b3a-aac4-49d2-a9d4-6746505c21c0" />
+
         
 - **Live Model Orchestration**:
     
     - **Model Selector (`m`)**: Scan and hot-swap GGUF models dynamically via the `llama-router` API. Automatically targets the active model for console payloads.
+      <img width="513" height="405" alt="image" src="https://github.com/user-attachments/assets/d12f627f-5cd4-47c3-9169-4cfb83beb520" />
+
         
     - **Deep Engine Tuner (`t`)**: A paginated, 3-panel configuration manifest (cycle with `Tab`) allowing live, on-the-fly injection of advanced `llama.cpp` parameters directly to `router.ini`:
         
         - _Page 1 (Compute & Memory)_: `ngl`, `ctx`, threads, batching, parallel slots, Flash Attention, mlock, no_mmap, and KV Cache quantization.
+          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/b7678cfb-d16c-4848-ae47-b6986f09e9c1" />
+
             
         - _Page 2 (Context & Caching)_: RoPE scaling, defragmentation thresholds, speculative decoding (Draft tokens), and persistent Prompt Caching to SSD.
+          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/cf2c45cc-2efb-4cf6-8af8-89e31c803ce3" />
+
             
         - _Page 3 (Default Sampling)_: Temperature, Top-K, Top-P, Min-P, and Repetition Penalties.
+          <img width="494" height="337" alt="image" src="https://github.com/user-attachments/assets/0291d190-7349-454a-99a4-ffdf369b0f0a" />
+
             
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
+  <img width="1899" height="108" alt="image" src="https://github.com/user-attachments/assets/80f5dcbc-3022-4d7b-8578-75ba4cdc56e5" />
+
     
     - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
         
