@@ -392,6 +392,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 _ => {}
                             }
+                        } else if app.show_gpu_inspector {
+                            // --- PROCESS SNIPER (GPU) ---
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => app.show_gpu_inspector = false,
+                                KeyCode::Up => app.gpu_proc_selected = app.gpu_proc_selected.saturating_sub(1),
+                                KeyCode::Down => { if app.gpu_proc_selected < app.gpu_processes.len().saturating_sub(1) { app.gpu_proc_selected += 1; } }
+                                KeyCode::Char('x') | KeyCode::Delete => {
+                                    if let Some((name, _)) = app.gpu_processes.get(app.gpu_proc_selected) {
+                                        let proc_name = name.clone();
+                                        if proc_name == "saltnitor" || proc_name.contains("llama-server") {
+                                            app.add_log(">>> PROCESS SNIPER: Access Denied. Cannot assassinate critical daemon.".to_string());
+                                        } else {
+                                            app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
+                                            tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else if app.show_sys_inspector {
+                            // --- PROCESS SNIPER (CPU/RAM) ---
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => app.show_sys_inspector = false,
+                                KeyCode::Up => app.sys_proc_selected = app.sys_proc_selected.saturating_sub(1),
+                                KeyCode::Down => { if app.sys_proc_selected < app.sys_processes.len().saturating_sub(1) { app.sys_proc_selected += 1; } }
+                                KeyCode::Char('x') | KeyCode::Delete => {
+                                    if let Some((name, _)) = app.sys_processes.get(app.sys_proc_selected) {
+                                        let proc_name = name.clone();
+                                        if proc_name == "saltnitor" || proc_name.contains("llama-server") {
+                                            app.add_log(">>> PROCESS SNIPER: Access Denied. Cannot assassinate critical daemon.".to_string());
+                                        } else {
+                                            app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
+                                            tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
                         } else if app.show_tuner {
                             // --- DEEP TUNER MENU CONTROLS ---
                             match key.code {

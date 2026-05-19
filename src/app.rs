@@ -44,6 +44,10 @@ pub struct App {
     pub gpu_clocks: String,
     pub sys_uptime: u64,
 
+    // --- Process Sniper State ---
+    pub gpu_proc_selected: usize,
+    pub sys_proc_selected: usize,
+
     // Search State
     pub is_searching: bool,
     pub search_query: String,
@@ -226,6 +230,8 @@ impl App {
             swap_total: 1.0,
             sys_processes: Vec::new(),
             sys_uptime: 0,
+            gpu_proc_selected: 0,
+            sys_proc_selected: 0,
             show_gpu_inspector: false,
             show_sys_inspector: false,
         }

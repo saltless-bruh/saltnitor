@@ -148,7 +148,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Style::default().fg(Color::DarkGray)
     };
 
-    // --- NEW: Dynamic Title for Search Bar ---
+    // --- Dynamic Title for Search Bar ---
     let logs_title = if app.is_searching {
         Line::from(vec![
             Span::styled(" Log Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
@@ -203,7 +203,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .alignment(ratatui::layout::Alignment::Right)
     };
 
-    // --- NEW: Dynamic Cursor Rendering ---
+    // --- Dynamic Cursor Rendering ---
     let chars: Vec<char> = app.console_input.chars().collect();
     let before: String = chars.iter().take(app.console_cursor).collect();
     let cursor_char: String = chars.iter().skip(app.console_cursor).take(1).collect();
@@ -334,35 +334,47 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // 8. Live Model Selector (Popup Overlay)
     if app.show_model_selector {
-        // --- NEW: Dynamic absolute height based on model count (min 5, max 20 lines) ---
         let height = (app.available_models.len() as u16 + 2).clamp(5, 20);
         let area = centered_rect_absolute(60, height, f.area());
-        
         f.render_widget(Clear, area);
 
         let mut items = Vec::new();
+        let mut active_model_name = String::new();
+
         if app.available_models.is_empty() {
-            // --- NEW: Center the loading text ---
             items.push(ListItem::new(Line::from("Scanning for models...").alignment(ratatui::layout::Alignment::Center)));
         } else {
             for (i, model) in app.available_models.iter().enumerate() {
+                if i == app.model_selector_index { active_model_name = model.clone(); }
                 let style = if i == app.model_selector_index {
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                
-                // --- NEW: Center-align the text inside the list, creating a clean "pill" highlight ---
-                items.push(ListItem::new(
-                    Line::from(Span::styled(format!("  {}  ", model), style))
-                        .alignment(ratatui::layout::Alignment::Center)
-                ));
+                } else { Style::default().fg(Color::White) };
+                items.push(ListItem::new(Line::from(Span::styled(format!("  {}  ", model), style)).alignment(ratatui::layout::Alignment::Center)));
             }
         }
 
+        // --- The VRAM Oracle UI ---
+        let oracle_line = if active_model_name.is_empty() {
+             Line::from("")
+        } else {
+             if let Some(est) = estimate_vram(&active_model_name, app.current_ctx) {
+                 let status = if app.vram_total > 0.0 && est > app.vram_total {
+                     Span::styled(format!("(Est: {:.1} GB / {:.1} GB) [OOM WARNING]", est, app.vram_total), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK))
+                 } else {
+                     Span::styled(format!("(Est: {:.1} GB / {:.1} GB) [SAFE]", est, app.vram_total), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                 };
+                 Line::from(vec![Span::styled(" Oracle Prediction: ", Style::default().fg(Color::Cyan)), status])
+             } else {
+                 Line::from(Span::styled(" Oracle Prediction: [UNKNOWN FILE SIZE]", Style::default().fg(Color::DarkGray)))
+             }
+        };
+
         let list = List::new(items)
-            .block(Block::default().title(" Target Model Selector ").borders(Borders::ALL).style(Style::default().fg(Color::Green)));
-        
+            .block(Block::default()
+                .title(" Target Model Selector ")
+                .title_bottom(oracle_line.alignment(ratatui::layout::Alignment::Center)) // Inject Oracle into bottom border!
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Green)));
         f.render_widget(list, area);
     }
 
@@ -408,13 +420,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
         let mut proc_text = vec![
             Line::from(""), // Spacer
-            Line::from(Span::styled(" --- Active VRAM Processes ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+            Line::from(vec![
+                Span::styled(" --- Active VRAM Processes --- ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("[Up/Dn] Target | [x] KILL", Style::default().fg(Color::DarkGray)),
+            ])
         ];
         if app.gpu_processes.is_empty() {
             proc_text.push(Line::from(Span::styled("  [No external processes dominating VRAM]", Style::default().fg(Color::DarkGray))));
         } else {
-            for (name, mem) in &app.gpu_processes {
-                proc_text.push(Line::from(format!("  • {:<25} | {:.2} GB", name, mem)));
+            for (i, (name, mem)) in app.gpu_processes.iter().enumerate() {
+                let style = if i == app.gpu_proc_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) };
+                proc_text.push(Line::from(Span::styled(format!("  • {:<25} | {:.2} GB", name, mem), style)));
             }
         }
         f.render_widget(Paragraph::new(proc_text), chunks[2]);
@@ -465,12 +481,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
         let mut proc_text = vec![
             Line::from(""), // Spacer
-            Line::from(Span::styled(" --- Top 8 System RAM Culprits ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
+            Line::from(vec![
+                Span::styled(" --- Top 8 System RAM Culprits --- ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("[Up/Dn] Target | [x] KILL", Style::default().fg(Color::DarkGray)),
+            ])
         ];
-        for (name, mem) in &app.sys_processes {
-            proc_text.push(Line::from(format!("  • {:<25} | {:.2} GB", name, mem)));
+        if app.sys_processes.is_empty() {
+            proc_text.push(Line::from(Span::styled("  [No external processes dominating RAM]", Style::default().fg(Color::DarkGray))));
+        } else {
+            for (i, (name, mem)) in app.sys_processes.iter().enumerate() {
+                let style = if i == app.sys_proc_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) };
+                proc_text.push(Line::from(Span::styled(format!("  • {:<25} | {:.2} GB", name, mem), style)));
+            }
         }
         f.render_widget(Paragraph::new(proc_text), chunks[2]);
+
     }
 
     // 11. Interactive Help Overlay
@@ -528,4 +553,37 @@ fn centered_rect_absolute(fixed_x: u16, fixed_y: u16, r: Rect) -> Rect {
             Constraint::Min(0),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// The VRAM Oracle Math Engine (Heuristic Estimator)
+fn estimate_vram(model: &str, ctx: i32) -> Option<f64> {
+    let model_upper = model.to_uppercase();
+    let mut params = 0.0;
+    let mut param_found = false;
+
+    // Parse parameter count (e.g., "30B", "8B", "70B")
+    for word in model_upper.replace("-", " ").replace("_", " ").split_whitespace() {
+        if word.ends_with("B") {
+            if let Ok(p) = word.trim_end_matches('B').parse::<f64>() {
+                params = p;
+                param_found = true;
+                break;
+            }
+        }
+    }
+    
+    if !param_found { return None; }
+
+    // Parse quantization bits
+    let mut bits = 16.0; // Default to fp16
+    if model_upper.contains("Q2") { bits = 2.5; }
+    else if model_upper.contains("Q3") { bits = 3.5; }
+    else if model_upper.contains("Q4") { bits = 4.5; }
+    else if model_upper.contains("Q5") { bits = 5.5; }
+    else if model_upper.contains("Q6") { bits = 6.5; }
+    else if model_upper.contains("Q8") { bits = 8.5; }
+
+    let file_vram = params * (bits / 8.0);
+    let ctx_vram = (ctx as f64 / 1024.0) * 0.125; // Base context overhead
+    Some(file_vram + ctx_vram)
 }
