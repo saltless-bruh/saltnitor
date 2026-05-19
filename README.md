@@ -13,6 +13,8 @@ Designed specifically for developers running `llama.cpp` or `llama-router` on Li
 - **Tactical Hardware Inspectors**:
     
     - **GPU Deep-Dive (`g`)**: Real-time VRAM allocation, core temperatures, wattage draw, and fan speeds. Includes an active process list to identify exactly which external applications are dominating your VRAM.
+      <img width="479" height="406" alt="image" src="https://github.com/user-attachments/assets/9af04349-0cd8-4049-933d-f93626f706a5" />
+
         
     - **CPU/System Deep-Dive (`c`)**: A dynamic graphical equalizer showing load distribution across all threads, total system uptime, and SSD Swap spillover metrics.
         
