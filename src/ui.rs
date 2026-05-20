@@ -288,7 +288,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from(""),
         ];
 
-        let cache_types = ["f16", "q8_0", "q4_0", "q4_1", "turbo2", "turbo3", "turbo4"];
+        let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
         
         let items: Vec<(&str, String)> = match app.tuner_page {
             0 => vec![

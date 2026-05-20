@@ -447,8 +447,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             5 => { app.flash_attn = !app.flash_attn; },
                                             6 => { app.mlock = !app.mlock; },
                                             7 => { app.no_mmap = !app.no_mmap; },
-                                            8 => if is_right && app.cache_k_idx < 6 { app.cache_k_idx += 1; } else if !is_right && app.cache_k_idx > 0 { app.cache_k_idx -= 1; },
-                                            9 => if is_right && app.cache_v_idx < 6 { app.cache_v_idx += 1; } else if !is_right && app.cache_v_idx > 0 { app.cache_v_idx -= 1; },
+                                            8 => if is_right && app.cache_k_idx < 8 { app.cache_k_idx += 1; } else if !is_right && app.cache_k_idx > 0 { app.cache_k_idx -= 1; },
+                                            9 => if is_right && app.cache_v_idx < 8 { app.cache_v_idx += 1; } else if !is_right && app.cache_v_idx > 0 { app.cache_v_idx -= 1; },
                                             _ => {}
                                         },
                                         1 => match app.tuner_selected {
@@ -473,7 +473,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                                 KeyCode::Enter => {
-                                    let cache_types = ["f16", "q8_0", "q4_0", "q4_1", "turbo2", "turbo3", "turbo4"];
+                                    let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
                                     
                                     // --- Grab the currently active model from state ---
                                     let active_model = app.active_model.clone();
@@ -540,7 +540,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 app.console_cursor = app.console_input.chars().count();
                                                 
                                                 // 3. Generate INI Payload
-                                                let cache_types = ["f16", "q8_0", "q4_0", "q4_1", "turbo2", "turbo3", "turbo4"];
+                                                let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
 
                                                 let env_content = format!(
                                                     "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nTEMP={}\nTOP_K={}\nTOP_P={}\n", 
