@@ -434,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
                                 KeyCode::Tab => { app.tuner_page = (app.tuner_page + 1) % 3; app.tuner_selected = 0; }
                                 KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
-                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 6, 2 => 4, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
+                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 10, 1 => 6, 2 => 4, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
                                 KeyCode::Left | KeyCode::Right => {
                                     let is_right = key.code == KeyCode::Right;
                                     match app.tuner_page {
@@ -449,6 +449,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             7 => { app.no_mmap = !app.no_mmap; },
                                             8 => if is_right && app.cache_k_idx < 3 { app.cache_k_idx += 1; } else if !is_right && app.cache_k_idx > 0 { app.cache_k_idx -= 1; },
                                             9 => if is_right && app.cache_v_idx < 3 { app.cache_v_idx += 1; } else if !is_right && app.cache_v_idx > 0 { app.cache_v_idx -= 1; },
+                                            10 => { app.turbo_quant = !app.turbo_quant; },
                                             _ => {}
                                         },
                                         1 => match app.tuner_selected {
@@ -476,9 +477,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
                                     let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
                                     let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
+                                    let turbo_quant_val = if app.turbo_quant { "true" } else { "false" };
                                     let ini_content = format!(
-                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
-                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel, app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx], app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
+                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nturbo-quant = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel, app.flash_attn, app.mlock, turbo_quant_val, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx], app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
                                     );
                                     app.add_log(format!(">>> DEEP CONFIG APPLIED: Page 1-3 Saved to router.ini"));
                                     app.show_tuner = false;
@@ -531,14 +533,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
                                                 let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
                                                 let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
+                                                let turbo_quant_val = if app.turbo_quant { "true" } else { "false" };
                                                 let ini_content = format!(
-                                                    "[model]\nmodel = {}\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                                    "[model]\nmodel = {}\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nturbo-quant = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
                                                     chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
-                                                    app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
+                                                    app.flash_attn, app.mlock, turbo_quant_val, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
                                                     app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, 
                                                     p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
                                                 );
-                                                
                                                 // 4. Restart Daemon & Trigger VRAM Pre-Load
                                                 app.add_log(format!(">>> FAST-SWAP: Locked [{}]. NGL: {}. Restarting Daemon...", chosen_model, auto_ngl));
                                                 let svc_name = app.service_name.clone();
