@@ -207,13 +207,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cpu_cores: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
             let cpu_load = cpu_cores.iter().sum::<f32>() / cpu_cores.len() as f32;
 
-            // Top System RAM Culprits (Showing ALL processes > 1MB)
+            // Top System RAM Culprits (Showing ALL processes > 1MB, Deduplicated)
             let mut procs: Vec<_> = sys.processes().values().collect();
-            procs.sort_by(|a, b| b.memory().cmp(&a.memory()));
+            procs.sort_by(|a, b| b.memory().cmp(&a.memory())); // Sort by memory descending first
+            
+            let mut seen_names = std::collections::HashSet::new();
             let sys_processes: Vec<(String, f64)> = procs.iter()
-                .filter(|p| p.memory() > 1_048_576) // Filter out tiny < 1MB background threads
-                .map(|p| {
-                    (p.name().to_string_lossy().to_string(), p.memory() as f64 / 1_073_741_824.0)
+                .filter(|p| p.memory() > 1_048_576) // Filter out tiny < 1MB threads
+                .filter_map(|p| {
+                    let name = p.name().to_string_lossy().to_string();
+                    // HashSet.insert() returns true only if the name has never been seen before
+                    if seen_names.insert(name.clone()) {
+                        Some((name, p.memory() as f64 / 1_073_741_824.0))
+                    } else {
+                        None // Silently drop the ghost thread
+                    }
                 }).collect();
 
             // NVIDIA Metrics (General)
@@ -531,12 +539,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
                                                 );
                                                 
-                                                // 4. Restart Daemon
-                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. NGL: {}. Restarting Daemon.", chosen_model, auto_ngl));
+                                                // 4. Restart Daemon & Trigger VRAM Pre-Load
+                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. NGL: {}. Restarting Daemon...", chosen_model, auto_ngl));
                                                 let svc_name = app.service_name.clone();
+                                                let host_api = app.host.clone();
+                                                let port_api = app.port;
+                                                let warmup_model = chosen_model.clone();
+                                                let tx_warmup = tx.clone();
+                                                
                                                 tokio::spawn(async move {
+                                                    // Overwrite configs and bounce the service
                                                     let _ = tokio::fs::write("router.ini", ini_content).await;
                                                     let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
+                                                    
+                                                    // Give systemd and llama-server 3 seconds to spin up the HTTP listener
+                                                    let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP: Daemon restarted. Sending VRAM Warm-Up Payload...".to_string())).await;
+                                                    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+                                                    
+                                                    // Fire a dummy payload to force the router to load the model into VRAM immediately
+                                                    let client = reqwest::Client::new();
+                                                    let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
+                                                    
+                                                    // We request just 1 max_token so it loads the VRAM but doesn't waste CPU time generating a long response
+                                                    let payload = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "warmup"}}], "max_tokens": 1}}"#, warmup_model);
+                                                    
+                                                    if let Ok(res) = client.post(&url).header("Content-Type", "application/json").body(payload).send().await {
+                                                        if res.status().is_success() {
+                                                            let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP: VRAM Warm-Up Successful. Model is locked and ready.".to_string())).await;
+                                                        } else {
+                                                            let _ = tx_warmup.send(Event::LogLine(format!(">>> FAST-SWAP ERROR: Warm-Up failed with status: {}", res.status()))).await;
+                                                        }
+                                                    } else {
+                                                        let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP ERROR: Daemon did not respond to Warm-Up payload.".to_string())).await;
+                                                    }
                                                 });
                                             }
                                         }

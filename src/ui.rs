@@ -53,9 +53,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let gauge_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(l_chunks[1]);
         
         let gpu_u_val = app.gpu_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
-        let vram_u_val = app.vram_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
+        // --- Use actual VRAM Capacity math, not Bandwidth utilization ---
+        let vram_ratio = if app.vram_total > 0.0 { (app.vram_used / app.vram_total).clamp(0.0, 1.0) } else { 0.0 };
+        let vram_percent = (vram_ratio * 100.0) as u32;
 
-        // --- FIXED: Horizontal Splits for 1-Line Gauges ---
+        // --- Horizontal Splits for 1-Line Gauges ---
         let g_row = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(19), Constraint::Min(0)]).split(gauge_chunks[0]);
         f.render_widget(Paragraph::new("[GPU Core Compute] "), g_row[0]);
         let g_gauge = Gauge::default().gauge_style(Style::default().fg(Color::Cyan)).ratio(gpu_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.gpu_util.trim()));
@@ -63,7 +65,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
         let v_row = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(19), Constraint::Min(0)]).split(gauge_chunks[1]);
         f.render_widget(Paragraph::new("[VRAM Allocation ] "), v_row[0]);
-        let v_gauge = Gauge::default().gauge_style(Style::default().fg(Color::LightBlue)).ratio(vram_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.vram_util.trim()));
+        let v_gauge = Gauge::default().gauge_style(Style::default().fg(Color::LightBlue)).ratio(vram_ratio).label(format!("{}%", vram_percent));
         f.render_widget(v_gauge, v_row[1]);
 
         // --- GPU List Rendering ---
@@ -79,9 +81,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         f.render_stateful_widget(list, right_inner, &mut app.gpu_proc_state);
 
     } else if app.show_sys_inspector {
-        let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(55), Constraint::Percentage(45)]).split(main_chunks[0]);
-        let left_block = Block::default().title(format!(" {} & DDR5 ", app.cpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
-        let right_block = Block::default().title(" Top System RAM Culprits ").title_bottom("[Up/Dn] Target | [x] Kill").borders(Borders::ALL).style(Style::default().fg(Color::Magenta));
+        // --- FIXED: Balanced 60/40 Split ---
+        let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(60), Constraint::Percentage(40)]).split(main_chunks[0]);
+        let left_block = Block::default().title(format!(" {} ({}-Thread) & DDR5 ", app.cpu_name, app.cpu_core_count)).borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
+        let right_block = Block::default().title(" Top RAM Culprits ").title_bottom("[Up/Dn] Target | [x] Kill").borders(Borders::ALL).style(Style::default().fg(Color::Magenta));
         
         let left_inner = left_block.inner(chunks[0]);
         let right_inner = right_block.inner(chunks[1]);
@@ -93,25 +96,43 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let hours = app.sys_uptime / 3600;
         let mins = (app.sys_uptime % 3600) / 60;
         
-        let stats_text = vec![
-            Line::from(vec![Span::raw(" System Uptime: "), Span::styled(format!("{:02}h {:02}m", hours, mins), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))]),
-            Line::from(vec![Span::raw(" SSD Swap Mem:  "), Span::styled(format!("{:.2} / {:.2} GB", app.swap_used, app.swap_total), Style::default().fg(swap_color).add_modifier(Modifier::BOLD))]),
-        ];
-        f.render_widget(Paragraph::new(stats_text), l_chunks[0]);
+        let stat_lines = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(l_chunks[0]);
+        
+        // Line 1: Uptime & RAM Gauge
+        let l1_split = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(18), Constraint::Length(22), Constraint::Min(0)]).split(stat_lines[0]);
+        f.render_widget(Paragraph::new(Line::from(vec![Span::raw(" Uptime: "), Span::styled(format!("{:02}h {:02}m", hours, mins), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))])), l1_split[0]);
+        f.render_widget(Paragraph::new(format!(" [RAM] {:>6.2}/{:<4.1} GB ", app.ram_used, app.ram_total)), l1_split[1]);
+        
+        let ram_ratio = if app.ram_total > 0.0 { (app.ram_used / app.ram_total).clamp(0.0, 1.0) } else { 0.0 };
+        let ram_gauge = Gauge::default().gauge_style(Style::default().fg(Color::Cyan)).ratio(ram_ratio).label(format!("{:.0}%", ram_ratio * 100.0));
+        f.render_widget(ram_gauge, l1_split[2]);
+
+        // Line 2: Swap & SWP Gauge
+        let l2_split = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(18), Constraint::Length(22), Constraint::Min(0)]).split(stat_lines[1]);
+        f.render_widget(Paragraph::new(Line::from(vec![Span::raw(" Swap:   "), Span::styled(format!("{:>5.2} GB", app.swap_used), Style::default().fg(swap_color).add_modifier(Modifier::BOLD))])), l2_split[0]);
+        f.render_widget(Paragraph::new(format!(" [SWP] {:>6.2}/{:<4.1} GB ", app.swap_used, app.swap_total)), l2_split[1]);
+
+        let swp_ratio = if app.swap_total > 0.0 { (app.swap_used / app.swap_total).clamp(0.0, 1.0) } else { 0.0 };
+        let swp_gauge = Gauge::default().gauge_style(Style::default().fg(Color::Magenta)).ratio(swp_ratio).label(format!("{:.0}%", swp_ratio * 100.0));
+        f.render_widget(swp_gauge, l2_split[2]);
 
         let labels: Vec<String> = (0..app.cpu_cores.len()).map(|i| format!("C{}", i)).collect();
         let mut barchart_data: Vec<(&str, u64)> = Vec::new();
         for i in 0..app.cpu_cores.len() { barchart_data.push((&labels[i], app.cpu_cores[i] as u64)); }
-        let cpu_barchart = BarChart::default().block(Block::default().title(Span::styled(format!("[{}-Thread Load]", app.cpu_core_count), Style::default().fg(Color::Magenta))).borders(Borders::NONE)).data(&barchart_data).bar_width(2).bar_gap(1).value_style(Style::default().fg(Color::Black).bg(Color::Magenta)).bar_style(Style::default().fg(Color::Magenta));
+        
+        // --- FIXED: Increased bar_gap to 2 to stretch the graph evenly ---
+        let cpu_barchart = BarChart::default().block(Block::default().title(Span::styled(format!("[{}-Thread Compute Load]", app.cpu_core_count), Style::default().fg(Color::Magenta))).borders(Borders::NONE)).data(&barchart_data).bar_width(3).bar_gap(2).value_style(Style::default().fg(Color::White).bg(Color::Magenta)).bar_style(Style::default().fg(Color::Magenta));
         f.render_widget(cpu_barchart, l_chunks[1]);
 
-        // --- CPU/RAM List Rendering ---
+        // --- Right Panel: Expanded Process Width ---
         let mut items = Vec::new();
         if app.sys_processes.is_empty() {
             items.push(ListItem::new(Line::from(Span::styled("  [No processes dominating RAM]", Style::default().fg(Color::DarkGray)))));
         } else {
             for (name, mem) in &app.sys_processes {
-                items.push(ListItem::new(Line::from(Span::raw(format!("  • {:<25} | {:.2} GB", name, mem)))));
+                // Truncate name to 24 chars instead of 16 for better readability
+                let clean_name = if name.len() > 24 { format!("{}...", &name[..21]) } else { name.clone() };
+                items.push(ListItem::new(Line::from(Span::raw(format!("  • {:<24} | {:>5.2} GB", clean_name, mem)))));
             }
         }
         let list = List::new(items).highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD));
