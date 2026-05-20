@@ -7,450 +7,88 @@ use ratatui::{
 };
 use crate::app::App;
 
-/// The main rendering function called on every frame.
 pub fn draw(f: &mut Frame, app: &mut App) {
-    // --- NEW: Terminal Size Safety Check ---
-    if f.area().width < 80 || f.area().height < 24 {
-        let warning = Paragraph::new("\n\n[!] TERMINAL FOOTPRINT TOO SMALL [!]\n\nPlease expand window to at least 80x24.")
+    // --- NEW: Minimum height lowered to 16 since we don't stack popups ---
+    if f.area().width < 80 || f.area().height < 16 {
+        let warning = Paragraph::new("\n\n[!] TERMINAL FOOTPRINT TOO SMALL [!]\n\nPlease expand window to at least 80x16.")
             .alignment(ratatui::layout::Alignment::Center)
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK))
             .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Red)));
-            
         f.render_widget(warning, f.area());
-        return; // Halt the rest of the UI rendering to prevent a math panic
+        return; 
     }
     
-    // 1. Define the Master Layout Layout
+    // 1. Dynamic Master Layout
+    let top_height = if app.show_gpu_inspector || app.show_sys_inspector { 7 } else { 6 };
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // Telemetry area
-            Constraint::Min(0),     // Log area expands to fill the middle
-            Constraint::Length(5),  // API Interrogator area
-            Constraint::Length(3),
+            Constraint::Length(top_height), // Dynamic Telemetry area
+            Constraint::Min(0),             // Logs expand to fill middle
+            Constraint::Length(5),          // Dynamic Bottom Deck
+            Constraint::Length(3),          // Hotkeys
         ])
         .split(f.area());
 
-    // Split the Top section: Left side for Memory Gauges, Right side for CPU Sparkline
-    let top_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
-        .split(main_chunks[0]);
-
-    // Split the Left Memory section into two stacked rows plus an audit line
-    let gauge_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // VRAM Gauge height
-            Constraint::Length(3), // RAM Gauge height
-        ])
-        .split(top_chunks[0]);
-    
-    // 2. RTX 3060 VRAM Gauge
-    let vram_ratio = if app.vram_total > 0.0 {
-        (app.vram_used / app.vram_total).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    
-    // Color coding logic: Yellow at 80%, Red at 95%
-    let vram_color = if vram_ratio >= 0.95 {
-        Color::Red
-    } else if vram_ratio >= 0.80 {
-        Color::Yellow
-    } else {
-        Color::Green
-    };
-
-    // --- NEW: Split the title into left and right components ---
-    let vram_title_left = if app.has_nvidia { format!(" {} VRAM Saturation ", app.gpu_name) } else { " [!] NO COMPATIBLE GPU DETECTED ".to_string() };
-    let vram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.vram_used, app.vram_total)).alignment(ratatui::layout::Alignment::Right);
-
-    let vram_gauge = Gauge::default()
-        .block(Block::default()
-            .title(vram_title_left)
-            .title(vram_title_right) // Adds the numbers to the right side of the border
-            .borders(Borders::ALL))
-        .gauge_style(Style::default().fg(vram_color).add_modifier(Modifier::BOLD))
-        .ratio(vram_ratio)
-        .label(""); // Clears the text out of the colored bar
-
-    f.render_widget(vram_gauge, gauge_chunks[0]);
-
-    // 3. DDR5 RAM Spillover Gauge
-    let ram_ratio = if app.ram_total > 0.0 {
-        (app.ram_used / app.ram_total).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-
-    // --- NEW: Split the title into left and right components ---
-    let ram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.ram_used, app.ram_total)).alignment(ratatui::layout::Alignment::Right);
-
-    let ram_gauge = Gauge::default()
-        .block(Block::default()
-            .title(" DDR5 System RAM Spillover ")
-            .title(ram_title_right) // Adds the numbers to the right side of the border
-            .borders(Borders::ALL))
-        .gauge_style(Style::default().fg(Color::Cyan))
-        .ratio(ram_ratio)
-        .label(""); // Clears the text out of the colored bar
-
-    f.render_widget(ram_gauge, gauge_chunks[1]);
-
-    // 4. Ryzen 7 7700 CPU Sparkline
-    // --- NEW: Grab the most recent load value from the history buffer ---
-    let current_cpu_load = app.cpu_history.last().copied().unwrap_or(0);
-    let cpu_title = format!(" {} (Current Load: {}%) ", app.cpu_name, current_cpu_load);
-
-    let cpu_sparkline = Sparkline::default()
-        .block(Block::default().title(cpu_title).borders(Borders::ALL)) // <-- Use the dynamic title
-        .data(&app.cpu_history)
-        .style(Style::default().fg(Color::Magenta))
-        .max(100);
-    f.render_widget(cpu_sparkline, top_chunks[1]);
-
-   // 5. Intelligent Log Analyzer (List Widget)
-    // --- NEW: Filter logs based on search query ---
-    let filtered_logs: Vec<&String> = app.logs.iter().filter(|log| {
-        if app.search_query.is_empty() {
-            true
-        } else {
-            log.to_lowercase().contains(&app.search_query.to_lowercase())
-        }
-    }).collect();
-
-    let log_items: Vec<ListItem> = filtered_logs
-        .into_iter()
-        .map(|log| {
-            let style = if log.contains("OOM") || log.contains("Failed") || log.contains("error") {
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-            } else if log.contains("Loading Model") || log.contains("Hot-swap") {
-                Style::default().fg(Color::Yellow)
-            } else if log.contains("llama_") {
-                Style::default().fg(Color::Blue)
-            } else {
-                Style::default().fg(Color::Gray)
-            };
-            ListItem::new(Line::from(Span::styled(log.clone(), style)))
-        })
-        .collect();
-
-    // --- Define Port Status Style ---
-    let port_style = if app.port_status.contains("ZOMBIE") {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD).add_modifier(Modifier::RAPID_BLINK)
-    } else if app.port_status.contains("SECURE") {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    // --- Dynamic Title for Search Bar ---
-    let logs_title = if app.is_searching {
-        Line::from(vec![
-            Span::styled(" Log Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{}█", app.search_query), Style::default().fg(Color::Cyan).add_modifier(Modifier::RAPID_BLINK)),
-        ])
-    } else if !app.search_query.is_empty() {
-        Line::from(Span::styled(format!(" Logs (Filtered: {}) - Press '/' to edit ", app.search_query), Style::default().fg(Color::Yellow)))
-    } else {
-        Line::from(Span::styled(" Intelligent Log Analyzer ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
-    };
-
-    let port_title = Line::from(vec![
-        Span::raw(" [Port: "),
-        Span::styled(&app.port_status, port_style),
-        Span::raw("] "),
-    ])
-    .alignment(ratatui::layout::Alignment::Right);
-
-    let logs_list = List::new(log_items)
-        .block(
-            Block::default()
-                .title(logs_title)
-                .title(port_title)
-                .borders(Borders::ALL)
-        )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED).fg(Color::Cyan))
-        .highlight_symbol(">> ");
-    
-    f.render_stateful_widget(logs_list, main_chunks[1], &mut app.log_state); 
-
-    // 6. API Interrogator (Mini-Console)
-    let console_border_color = if app.console_focused { Color::Cyan } else { Color::DarkGray };
-
-    // --- NEW: Split titles and distribute them across the borders ---
-    let title_main = " API Interrogator ";
-
-    let title_target = Line::from(vec![
-        Span::raw("[Target: "),
-        Span::styled(&app.active_model, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw("] "),
-    ]).alignment(ratatui::layout::Alignment::Right);
-
-    let title_mode = if app.console_focused {
-        // --- NEW: Added the 'Esc to exit' hint with a subtle gray style ---
-        Line::from(vec![
-            Span::styled(" [INSERT MODE] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled("[Press 'Esc' to exit] ", Style::default().fg(Color::DarkGray)),
-        ])
-        .alignment(ratatui::layout::Alignment::Right)
-    } else {
-        Line::from(Span::styled(" [Press 'i' to focus] ", Style::default().fg(Color::DarkGray)))
-            .alignment(ratatui::layout::Alignment::Right)
-    };
-
-    // --- Dynamic Cursor Rendering ---
-    let chars: Vec<char> = app.console_input.chars().collect();
-    let before: String = chars.iter().take(app.console_cursor).collect();
-    let cursor_char: String = chars.iter().skip(app.console_cursor).take(1).collect();
-    let after: String = chars.iter().skip(app.console_cursor + 1).collect();
-
-    // Build the input line with a highlighted block cursor if focused
-    let mut input_line = vec![
-        Span::styled("> ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw(before),
-    ];
-
-    if app.console_focused {
-        if cursor_char.is_empty() {
-            // Cursor is at the very end of the string
-            input_line.push(Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)));
-        } else {
-            // Cursor is highlighting a specific character
-            input_line.push(Span::styled(cursor_char, Style::default().add_modifier(Modifier::REVERSED)));
-        }
-        input_line.push(Span::raw(after));
-    } else {
-        // When not focused, just print normally without the block cursor
-        input_line.push(Span::raw(cursor_char));
-        input_line.push(Span::raw(after));
-    }
-
-    let console_text = vec![
-        Line::from(input_line), // Use the dynamically built cursor line
-        Line::from(vec![
-            Span::styled(format!("[TTFT: {}ms] ", app.last_ttft), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
-            // --- UPDATED: Multi-Metric Display ---
-            Span::styled(format!("[Eval: {:.1} t/s | Gen: {:.1} t/s] ", app.last_eval_tps, app.last_gen_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(&app.last_api_result, Style::default().fg(Color::Gray)),
-        ]),
-    ];
-
-    let console_block = Paragraph::new(console_text)
-        .block(
-            Block::default()
-                .title(title_main)
-                .title(title_target)      
-                .title_bottom(title_mode) 
-                .borders(Borders::ALL)
-                .style(Style::default().fg(console_border_color))
-        )
-        .wrap(ratatui::widgets::Wrap { trim: true }); // <-- NEW: Forces text to wrap beautifully!
-    
-    f.render_widget(console_block, main_chunks[2]);
-
-    // 6.5 Core Quick Reference (Restored & Minimal)
-    let core_hotkeys = Line::from(vec![
-        Span::styled(" [q] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Quit  |"),
-        Span::styled(" [h] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Full Help Menu  |"),
-        Span::styled(" [t] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Deep Tuner  |"),
-        Span::styled(" [m] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Models  |"),
-        Span::styled(" [i] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("API Console"),
-    ]);
-
-    let hotkeys_block = Paragraph::new(core_hotkeys)
-        .block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)))
-        .alignment(ratatui::layout::Alignment::Center);
-    f.render_widget(hotkeys_block, main_chunks[3]);
-
-    // 7. Dynamic Config Tuner (Popup Overlay)
-    if app.show_tuner {
-        let area = centered_rect_absolute(58, 17, f.area()); 
-        f.render_widget(Clear, area); 
-
-        let s = |idx| if app.tuner_selected == idx { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED) } else { Style::default().fg(Color::Gray) };
-        let on_off = |b| if b { "ON " } else { "OFF" };
-        let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
-
-        let mut text = vec![Line::from("")];
-
-        // DYNAMIC PAGE RENDERING
-        match app.tuner_page {
-            0 => {
-                text.push(Line::from(Span::styled(" --- [ PAGE 1: COMPUTE & MEMORY ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  GPU Layers (ngl):       {:<8} [< / >]  ", app.current_ngl), s(0))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Context Size (ctx):     {:<8} [< / >]  ", app.current_ctx), s(1))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  CPU Threads (threads):  {:<8} [< / >]  ", app.current_threads), s(2))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Batch Size (n_batch):   {:<8} [< / >]  ", app.current_batch), s(3))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Parallel Slots (np):    {:<8} [< / >]  ", app.current_parallel), s(4))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Flash Attention:        {:<8} [< / >]  ", on_off(app.flash_attn)), s(5))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Memory Lock (mlock):    {:<8} [< / >]  ", on_off(app.mlock)), s(6))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  No Mem Map (no_mmap):   {:<8} [< / >]  ", on_off(app.no_mmap)), s(7))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  KV Cache (K-Type):      {:<8} [< / >]  ", cache_types[app.cache_k_idx]), s(8))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  KV Cache (V-Type):      {:<8} [< / >]  ", cache_types[app.cache_v_idx]), s(9))).alignment(ratatui::layout::Alignment::Center));
-            },
-            1 => {
-                text.push(Line::from(Span::styled(" --- [ PAGE 2: CONTEXT & CACHING ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  RoPE Freq Base:         {:<8} [< / >]  ", app.rope_base), s(0))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  RoPE Scale Factor:      {:<8.2} [< / >]  ", app.rope_scale), s(1))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Defrag Threshold:       {:<8.2} [< / >]  ", app.defrag_thold), s(2))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Draft Max Tokens:       {:<8} [< / >]  ", app.draft_max), s(3))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Draft Min Tokens:       {:<8} [< / >]  ", app.draft_min), s(4))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Prompt Cache (Disk):    {:<8} [< / >]  ", on_off(app.prompt_cache)), s(5))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Cache All (Chat Hist):  {:<8} [< / >]  ", on_off(app.prompt_cache_all)), s(6))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from("")); // Reduced spacers from 5 to 3 to maintain exact box height
-                text.push(Line::from(""));
-                text.push(Line::from(""));
-            },
-            2 => {
-                text.push(Line::from(Span::styled(" --- [ PAGE 3: DEFAULT SAMPLING ] ---", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Temperature:            {:<8.2} [< / >]  ", app.temp), s(0))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Top-K:                  {:<8} [< / >]  ", app.top_k), s(1))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Top-P:                  {:<8.2} [< / >]  ", app.top_p), s(2))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Min-P:                  {:<8.2} [< / >]  ", app.min_p), s(3))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from(Span::styled(format!("  Repeat Penalty:         {:<8.2} [< / >]  ", app.rep_pen), s(4))).alignment(ratatui::layout::Alignment::Center));
-                text.push(Line::from("")); // Spacers
-                text.push(Line::from(""));
-                text.push(Line::from(""));
-                text.push(Line::from(""));
-                text.push(Line::from(""));
-            },
-            _ => {}
-        }
-
-        text.push(Line::from(""));
-        text.push(Line::from(Span::styled("[TAB] Next Page   |   [ENTER] Apply   |   [ESC] Cancel", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Center));
-
-        let title = format!(" Deep router.ini Tuner [Page {}/3] ", app.tuner_page + 1);
-        let popup_block = Paragraph::new(text)
-            .block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(Color::Cyan)));
-        
-        f.render_widget(popup_block, area);
-    }
-
-    // 8. Live Model Selector (Popup Overlay)
-    if app.show_model_selector {
-        let height = (app.available_models.len() as u16 + 2).clamp(5, 20);
-        let area = centered_rect_absolute(60, height, f.area());
-        f.render_widget(Clear, area);
-
-        let mut items = Vec::new();
-        let mut active_model_name = String::new();
-
-        if app.available_models.is_empty() {
-            items.push(ListItem::new(Line::from("Scanning for models...").alignment(ratatui::layout::Alignment::Center)));
-        } else {
-            for (i, model) in app.available_models.iter().enumerate() {
-                if i == app.model_selector_index { active_model_name = model.clone(); }
-                let style = if i == app.model_selector_index {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)
-                } else { Style::default().fg(Color::White) };
-                items.push(ListItem::new(Line::from(Span::styled(format!("  {}  ", model), style)).alignment(ratatui::layout::Alignment::Center)));
-            }
-        }
-
-        // --- The VRAM Oracle UI ---
-        let oracle_line = if active_model_name.is_empty() {
-             Line::from("")
-        } else {
-             if let Some(est) = estimate_vram(&active_model_name, app.current_ctx) {
-                 let status = if app.vram_total > 0.0 && est > app.vram_total {
-                     Span::styled(format!("(Est: {:.1} GB / {:.1} GB) [OOM WARNING]", est, app.vram_total), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD | Modifier::RAPID_BLINK))
-                 } else {
-                     Span::styled(format!("(Est: {:.1} GB / {:.1} GB) [SAFE]", est, app.vram_total), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-                 };
-                 Line::from(vec![Span::styled(" Oracle Prediction: ", Style::default().fg(Color::Cyan)), status])
-             } else {
-                 Line::from(Span::styled(" Oracle Prediction: [UNKNOWN FILE SIZE]", Style::default().fg(Color::DarkGray)))
-             }
-        };
-
-        let list = List::new(items)
-            .block(Block::default()
-                .title(" Target Model Selector ")
-                .title_bottom(oracle_line.alignment(ratatui::layout::Alignment::Center)) // Inject Oracle into bottom border!
-                .borders(Borders::ALL)
-                .style(Style::default().fg(Color::Green)));
-        f.render_widget(list, area);
-    }
-
-    // 9. GPU Inspector Popup (Vertical Stack UI)
+    // 2. Dynamic Top Deck Rendering
     if app.show_gpu_inspector {
-        let area = centered_rect_absolute(55, 20, f.area());
-        f.render_widget(Clear, area);
+        let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(55), Constraint::Percentage(45)]).split(main_chunks[0]);
+        let left_block = Block::default().title(format!(" {} Architecture ", app.gpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Green));
+        let right_block = Block::default().title(" Active VRAM Processes ").title_bottom("[Up/Dn] Target | [x] Kill").borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
+        
+        let left_inner = left_block.inner(chunks[0]);
+        let right_inner = right_block.inner(chunks[1]);
+        f.render_widget(left_block, chunks[0]);
+        f.render_widget(right_block, chunks[1]);
 
-        let popup_block = Block::default().title(format!(" {} Architecture ", app.gpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Green));
-        let inner_area = popup_block.inner(area);
-        f.render_widget(popup_block, area);
-
-        let chunks = Layout::default().direction(Direction::Vertical).constraints([
-            Constraint::Length(3), // Text Stats
-            Constraint::Length(5), // Gauges
-            Constraint::Min(0),    // Process List
-        ]).split(inner_area);
-
+        let l_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(2), Constraint::Length(3)]).split(left_inner);
         let temp_color = if app.gpu_temp > 80 { Color::Red } else if app.gpu_temp > 70 { Color::Yellow } else { Color::Green };
         
         let stats_text = vec![
-            Line::from(vec![
-                Span::raw(" Core Temp:  "), Span::styled(format!("{:<15}°C", app.gpu_temp), Style::default().fg(temp_color).add_modifier(Modifier::BOLD)),
-                Span::raw(" Fan Speed:  "), Span::styled(format!("{}%", app.gpu_fan), Style::default().fg(Color::White)),
-            ]),
-            Line::from(vec![
-                Span::raw(" Power Draw: "), Span::styled(format!("{:<15}", app.gpu_power), Style::default().fg(Color::Yellow)),
-                Span::raw(" Clocks:     "), Span::styled(&app.gpu_clocks, Style::default().fg(Color::Magenta)),
-            ]),
+            Line::from(vec![Span::raw(" Core Temp:  "), Span::styled(format!("{:<15}°C", app.gpu_temp), Style::default().fg(temp_color).add_modifier(Modifier::BOLD)), Span::raw(" Fan Speed:  "), Span::styled(format!("{}%", app.gpu_fan), Style::default().fg(Color::White))]),
+            Line::from(vec![Span::raw(" Power Draw: "), Span::styled(format!("{:<15}", app.gpu_power), Style::default().fg(Color::Yellow)), Span::raw(" Clocks:     "), Span::styled(&app.gpu_clocks, Style::default().fg(Color::Magenta))]),
         ];
-        f.render_widget(Paragraph::new(stats_text), chunks[0]);
+        f.render_widget(Paragraph::new(stats_text), l_chunks[0]);
 
-        let gauge_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(2), Constraint::Length(2)]).split(chunks[1]);
+        let gauge_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Length(1)]).split(l_chunks[1]);
         
         let gpu_u_val = app.gpu_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
         let vram_u_val = app.vram_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
 
-        let g_gauge = Gauge::default().block(Block::default().title("GPU Core Compute").borders(Borders::NONE)).gauge_style(Style::default().fg(Color::Cyan)).ratio(gpu_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.gpu_util));
-        let v_gauge = Gauge::default().block(Block::default().title("VRAM Allocation").borders(Borders::NONE)).gauge_style(Style::default().fg(Color::LightBlue)).ratio(vram_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.vram_util));
-        
-        f.render_widget(g_gauge, gauge_chunks[0]);
-        f.render_widget(v_gauge, gauge_chunks[1]);
+        // --- FIXED: Horizontal Splits for 1-Line Gauges ---
+        let g_row = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(19), Constraint::Min(0)]).split(gauge_chunks[0]);
+        f.render_widget(Paragraph::new("[GPU Core Compute] "), g_row[0]);
+        let g_gauge = Gauge::default().gauge_style(Style::default().fg(Color::Cyan)).ratio(gpu_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.gpu_util.trim()));
+        f.render_widget(g_gauge, g_row[1]);
 
-        let mut proc_text = vec![
-            Line::from(""), // Spacer
-            Line::from(vec![
-                Span::styled(" --- Active VRAM Processes --- ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled("[Up/Dn] Target | [x] KILL", Style::default().fg(Color::DarkGray)),
-            ])
-        ];
+        let v_row = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(19), Constraint::Min(0)]).split(gauge_chunks[1]);
+        f.render_widget(Paragraph::new("[VRAM Allocation ] "), v_row[0]);
+        let v_gauge = Gauge::default().gauge_style(Style::default().fg(Color::LightBlue)).ratio(vram_u_val.clamp(0.0, 1.0)).label(format!("{}%", app.vram_util.trim()));
+        f.render_widget(v_gauge, v_row[1]);
+
+        // --- GPU List Rendering ---
+        let mut items = Vec::new();
         if app.gpu_processes.is_empty() {
-            proc_text.push(Line::from(Span::styled("  [No external processes dominating VRAM]", Style::default().fg(Color::DarkGray))));
+            items.push(ListItem::new(Line::from(Span::styled("  [No external processes dominating VRAM]", Style::default().fg(Color::DarkGray)))));
         } else {
-            for (i, (name, mem)) in app.gpu_processes.iter().enumerate() {
-                let style = if i == app.gpu_proc_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) };
-                proc_text.push(Line::from(Span::styled(format!("  • {:<25} | {:.2} GB", name, mem), style)));
+            for (name, mem) in &app.gpu_processes {
+                items.push(ListItem::new(Line::from(Span::raw(format!("  • {:<25} | {:.2} GB", name, mem)))));
             }
         }
-        f.render_widget(Paragraph::new(proc_text), chunks[2]);
-    }
+        let list = List::new(items).highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD));
+        f.render_stateful_widget(list, right_inner, &mut app.gpu_proc_state);
 
-    // 10. System/CPU Inspector Popup (Vertical Stack UI)
-    if app.show_sys_inspector {
-        let area = centered_rect_absolute(65, 24, f.area()); 
-        f.render_widget(Clear, area);
+    } else if app.show_sys_inspector {
+        let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(55), Constraint::Percentage(45)]).split(main_chunks[0]);
+        let left_block = Block::default().title(format!(" {} & DDR5 ", app.cpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
+        let right_block = Block::default().title(" Top System RAM Culprits ").title_bottom("[Up/Dn] Target | [x] Kill").borders(Borders::ALL).style(Style::default().fg(Color::Magenta));
+        
+        let left_inner = left_block.inner(chunks[0]);
+        let right_inner = right_block.inner(chunks[1]);
+        f.render_widget(left_block, chunks[0]);
+        f.render_widget(right_block, chunks[1]);
 
-        let popup_block = Block::default().title(format!(" {} & DDR5 ", app.cpu_name)).borders(Borders::ALL).style(Style::default().fg(Color::Cyan));
-        let inner_area = popup_block.inner(area);
-        f.render_widget(popup_block, area);
-
-        let chunks = Layout::default().direction(Direction::Vertical).constraints([
-            Constraint::Length(3),  // Uptime & Swap
-            Constraint::Length(7),  // Bar Chart
-            Constraint::Min(0),     // Process List
-        ]).split(inner_area);
-
+        let l_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(2), Constraint::Min(0)]).split(left_inner);
         let swap_color = if app.swap_used > 1.0 { Color::Red } else { Color::Green };
         let hours = app.sys_uptime / 3600;
         let mins = (app.sys_uptime % 3600) / 60;
@@ -459,46 +97,242 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from(vec![Span::raw(" System Uptime: "), Span::styled(format!("{:02}h {:02}m", hours, mins), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))]),
             Line::from(vec![Span::raw(" SSD Swap Mem:  "), Span::styled(format!("{:.2} / {:.2} GB", app.swap_used, app.swap_total), Style::default().fg(swap_color).add_modifier(Modifier::BOLD))]),
         ];
-        f.render_widget(Paragraph::new(stats_text), chunks[0]);
+        f.render_widget(Paragraph::new(stats_text), l_chunks[0]);
 
         let labels: Vec<String> = (0..app.cpu_cores.len()).map(|i| format!("C{}", i)).collect();
         let mut barchart_data: Vec<(&str, u64)> = Vec::new();
-        
-        for i in 0..app.cpu_cores.len() {
-            barchart_data.push((&labels[i], app.cpu_cores[i] as u64));
-        }
+        for i in 0..app.cpu_cores.len() { barchart_data.push((&labels[i], app.cpu_cores[i] as u64)); }
+        let cpu_barchart = BarChart::default().block(Block::default().title(Span::styled(format!("[{}-Thread Load]", app.cpu_core_count), Style::default().fg(Color::Magenta))).borders(Borders::NONE)).data(&barchart_data).bar_width(2).bar_gap(1).value_style(Style::default().fg(Color::Black).bg(Color::Magenta)).bar_style(Style::default().fg(Color::Magenta));
+        f.render_widget(cpu_barchart, l_chunks[1]);
 
-        let chart_title = format!(" --- {}-Thread Processor Load --- ", app.cpu_core_count);
-        let cpu_barchart = BarChart::default()
-            .block(Block::default().title(Span::styled(chart_title, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD))).borders(Borders::NONE))
-            .data(&barchart_data)
-            .bar_width(3)
-            .bar_gap(1)
-            .value_style(Style::default().fg(Color::Black).bg(Color::Magenta))
-            .bar_style(Style::default().fg(Color::Magenta));
-        
-        f.render_widget(cpu_barchart, chunks[1]);
-
-        let mut proc_text = vec![
-            Line::from(""), // Spacer
-            Line::from(vec![
-                Span::styled(" --- Top 8 System RAM Culprits --- ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                Span::styled("[Up/Dn] Target | [x] KILL", Style::default().fg(Color::DarkGray)),
-            ])
-        ];
+        // --- CPU/RAM List Rendering ---
+        let mut items = Vec::new();
         if app.sys_processes.is_empty() {
-            proc_text.push(Line::from(Span::styled("  [No external processes dominating RAM]", Style::default().fg(Color::DarkGray))));
+            items.push(ListItem::new(Line::from(Span::styled("  [No processes dominating RAM]", Style::default().fg(Color::DarkGray)))));
         } else {
-            for (i, (name, mem)) in app.sys_processes.iter().enumerate() {
-                let style = if i == app.sys_proc_selected { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::White) };
-                proc_text.push(Line::from(Span::styled(format!("  • {:<25} | {:.2} GB", name, mem), style)));
+            for (name, mem) in &app.sys_processes {
+                items.push(ListItem::new(Line::from(Span::raw(format!("  • {:<25} | {:.2} GB", name, mem)))));
             }
         }
-        f.render_widget(Paragraph::new(proc_text), chunks[2]);
+        let list = List::new(items).highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED).add_modifier(Modifier::BOLD));
+        f.render_stateful_widget(list, right_inner, &mut app.sys_proc_state);
 
+    } else {
+        // --- Standard Default Telemetry ---
+        let top_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(main_chunks[0]);
+        let gauge_chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Length(3)]).split(top_chunks[0]);
+        
+        let vram_ratio = if app.vram_total > 0.0 { (app.vram_used / app.vram_total).clamp(0.0, 1.0) } else { 0.0 };
+        let vram_color = if vram_ratio >= 0.95 { Color::Red } else if vram_ratio >= 0.80 { Color::Yellow } else { Color::Green };
+        let vram_title_left = if app.has_nvidia { format!(" {} VRAM Saturation ", app.gpu_name) } else { " [!] NO GPU DETECTED ".to_string() };
+        let vram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.vram_used, app.vram_total)).alignment(ratatui::layout::Alignment::Right);
+        let vram_gauge = Gauge::default().block(Block::default().title(vram_title_left).title(vram_title_right).borders(Borders::ALL)).gauge_style(Style::default().fg(vram_color).add_modifier(Modifier::BOLD)).ratio(vram_ratio).label("");
+        f.render_widget(vram_gauge, gauge_chunks[0]);
+
+        let ram_ratio = if app.ram_total > 0.0 { (app.ram_used / app.ram_total).clamp(0.0, 1.0) } else { 0.0 };
+        let ram_title_right = Line::from(format!(" {:.2} / {:.1} GB ", app.ram_used, app.ram_total)).alignment(ratatui::layout::Alignment::Right);
+        let ram_gauge = Gauge::default().block(Block::default().title(" DDR5 System RAM Spillover ").title(ram_title_right).borders(Borders::ALL)).gauge_style(Style::default().fg(Color::Cyan)).ratio(ram_ratio).label("");
+        f.render_widget(ram_gauge, gauge_chunks[1]);
+
+        let current_cpu_load = app.cpu_history.last().copied().unwrap_or(0);
+        let cpu_title = format!(" {} (Current Load: {}%) ", app.cpu_name, current_cpu_load);
+        let cpu_sparkline = Sparkline::default().block(Block::default().title(cpu_title).borders(Borders::ALL)).data(&app.cpu_history).style(Style::default().fg(Color::Magenta)).max(100);
+        f.render_widget(cpu_sparkline, top_chunks[1]);
     }
 
-    // 11. Interactive Help Overlay
+    // 3. Intelligent Log Analyzer
+    let filtered_logs: Vec<&String> = app.logs.iter().filter(|log| {
+        if app.search_query.is_empty() { true } else { log.to_lowercase().contains(&app.search_query.to_lowercase()) }
+    }).collect();
+
+    let log_items: Vec<ListItem> = filtered_logs.into_iter().map(|log| {
+        let style = if log.contains("OOM") || log.contains("Failed") || log.contains("error") { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD) } 
+        else if log.contains("Loading Model") || log.contains("Hot-swap") { Style::default().fg(Color::Yellow) } 
+        else if log.contains("llama_") { Style::default().fg(Color::Blue) } 
+        else { Style::default().fg(Color::Gray) };
+        ListItem::new(Line::from(Span::styled(log.clone(), style)))
+    }).collect();
+
+    let port_style = if app.port_status.contains("ZOMBIE") { Style::default().fg(Color::Red).add_modifier(Modifier::BOLD).add_modifier(Modifier::RAPID_BLINK) } 
+    else if app.port_status.contains("SECURE") { Style::default().fg(Color::Green) } 
+    else { Style::default().fg(Color::DarkGray) };
+
+    let logs_title = if app.is_searching {
+        Line::from(vec![Span::styled(" Log Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::styled(format!("{}█", app.search_query), Style::default().fg(Color::Cyan).add_modifier(Modifier::RAPID_BLINK))])
+    } else if !app.search_query.is_empty() {
+        Line::from(Span::styled(format!(" Logs (Filtered: {}) - Press '/' to edit ", app.search_query), Style::default().fg(Color::Yellow)))
+    } else {
+        Line::from(Span::styled(" Intelligent Log Analyzer ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)))
+    };
+    let port_title = Line::from(vec![Span::raw(" [Port: "), Span::styled(&app.port_status, port_style), Span::raw("] ")]).alignment(ratatui::layout::Alignment::Right);
+    let logs_list = List::new(log_items).block(Block::default().title(logs_title).title(port_title).borders(Borders::ALL)).highlight_style(Style::default().add_modifier(Modifier::REVERSED).fg(Color::Cyan)).highlight_symbol(">> ");
+    f.render_stateful_widget(logs_list, main_chunks[1], &mut app.log_state); 
+
+    // 4. DYNAMIC BOTTOM DECK (Interrogator vs Hot-Swap)
+    if app.bottom_tab_mode == 0 { // --- API Interrogator ---
+        let console_border_color = if app.console_focused { Color::Cyan } else { Color::DarkGray };
+        let title_target = Line::from(vec![Span::raw("[Target: "), Span::styled(&app.active_model, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw("] ")]).alignment(ratatui::layout::Alignment::Right);
+        
+        let title_mode = if app.console_focused {
+            Line::from(vec![Span::styled(" [INSERT MODE] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::styled("[Press 'Esc' to exit] ", Style::default().fg(Color::DarkGray))]).alignment(ratatui::layout::Alignment::Right)
+        } else {
+            Line::from(vec![Span::styled(" [Tab] Hot-Swap ", Style::default().fg(Color::DarkGray)), Span::styled("| [Press 'i' to focus] ", Style::default().fg(Color::DarkGray))]).alignment(ratatui::layout::Alignment::Right)
+        };
+
+        let chars: Vec<char> = app.console_input.chars().collect();
+        let before: String = chars.iter().take(app.console_cursor).collect();
+        let cursor_char: String = chars.iter().skip(app.console_cursor).take(1).collect();
+        let after: String = chars.iter().skip(app.console_cursor + 1).collect();
+
+        let mut input_line = vec![Span::styled("> ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw(before)];
+        if app.console_focused {
+            if cursor_char.is_empty() { input_line.push(Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED))); } 
+            else { input_line.push(Span::styled(cursor_char, Style::default().add_modifier(Modifier::REVERSED))); }
+            input_line.push(Span::raw(after));
+        } else {
+            input_line.push(Span::raw(cursor_char)); input_line.push(Span::raw(after));
+        }
+
+        let console_text = vec![
+            Line::from(input_line), 
+            Line::from(vec![Span::styled(format!("[TTFT: {}ms] ", app.last_ttft), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)), Span::styled(format!("[Eval: {:.1} t/s | Gen: {:.1} t/s] ", app.last_eval_tps, app.last_gen_tps), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)), Span::styled(&app.last_api_result, Style::default().fg(Color::Gray))]),
+        ];
+
+        let console_block = Paragraph::new(console_text).block(Block::default().title(" API Interrogator ").title(title_target).title_bottom(title_mode).borders(Borders::ALL).style(Style::default().fg(console_border_color))).wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(console_block, main_chunks[2]);
+        
+    } else { // --- Auto-Tuning Hot-Swap ---
+        let mut items = Vec::new();
+        let selected_idx = app.hot_swap_state.selected();
+
+        for (i, model) in app.available_models.iter().enumerate() {
+            let mut line_spans = vec![Span::raw(format!("  {:<50} ", model))];
+            
+            // Inject VRAM Oracle directly inline for the highlighted model!
+            if Some(i) == selected_idx && app.console_focused {
+                if let Some(est) = estimate_vram(model, app.current_ctx) {
+                    if app.vram_total > 0.0 && est > app.vram_total {
+                        line_spans.push(Span::styled(format!("[Oracle: {:.1} GB / {:.1} GB - HYBRID]", est, app.vram_total), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)));
+                    } else {
+                        line_spans.push(Span::styled(format!("[Oracle: {:.1} GB / {:.1} GB - SAFE]", est, app.vram_total), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
+                    }
+                }
+            }
+            items.push(ListItem::new(Line::from(line_spans)));
+        }
+
+        let title_target = Line::from(vec![Span::raw("[Target: "), Span::styled(&app.active_model, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw("] ")]).alignment(ratatui::layout::Alignment::Right);
+        
+        let title_mode = if app.console_focused {
+            Line::from(vec![Span::styled(" [Enter] Swap ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::styled("| [Esc] Cancel Focus ", Style::default().fg(Color::DarkGray))]).alignment(ratatui::layout::Alignment::Right)
+        } else {
+            Line::from(vec![Span::styled(" [Tab] Interrogator ", Style::default().fg(Color::DarkGray)), Span::styled("| [Press 'i' to focus] ", Style::default().fg(Color::DarkGray))]).alignment(ratatui::layout::Alignment::Right)
+        };
+
+        let border_color = if app.console_focused { Color::Cyan } else { Color::DarkGray };
+        let list = List::new(items)
+            .block(Block::default().title(" Auto-Tuning Hot-Swap ").title(title_target).title_bottom(title_mode).borders(Borders::ALL).style(Style::default().fg(border_color)))
+            .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+        f.render_stateful_widget(list, main_chunks[2], &mut app.hot_swap_state);
+    }
+
+    // 5. Hotkeys
+    let hotkeys = Line::from(vec![
+        Span::styled(" [q] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Quit  |"),
+        Span::styled(" [h] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Help Menu  |"),
+        Span::styled(" [t] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Deep Tuner  |"),
+        Span::styled(" [Esc] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)), Span::raw("Close / Unfocus"),
+    ]);
+    let hotkeys_block = Paragraph::new(hotkeys).block(Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Center);
+    f.render_widget(hotkeys_block, main_chunks[3]);
+
+    // 6. Config Tuner Popup
+    if app.show_tuner {
+        let area = centered_rect_absolute(60, 20, f.area());
+        f.render_widget(Clear, area);
+
+        let page_title = match app.tuner_page {
+            0 => "COMPUTE & MEMORY",
+            1 => "CONTEXT & SPECULATION",
+            _ => "SAMPLING DEFAULTS",
+        };
+
+        let mut list_items = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" --- [ PAGE ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{}: {} ] --- ", app.tuner_page + 1, page_title), Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+            ]).alignment(ratatui::layout::Alignment::Center),
+            Line::from(""),
+        ];
+
+        let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
+        
+        let items: Vec<(&str, String)> = match app.tuner_page {
+            0 => vec![
+                ("GPU Layers (ngl)", app.current_ngl.to_string()),
+                ("Context Size (ctx)", app.current_ctx.to_string()),
+                ("CPU Threads (threads)", app.current_threads.to_string()),
+                ("Batch Size (n_batch)", app.current_batch.to_string()),
+                ("Parallel Slots (np)", app.current_parallel.to_string()),
+                ("Flash Attention", if app.flash_attn { "ON".to_string() } else { "OFF".to_string() }),
+                ("Memory Lock (mlock)", if app.mlock { "ON".to_string() } else { "OFF".to_string() }),
+                ("No Mem Map (no_mmap)", if app.no_mmap { "ON".to_string() } else { "OFF".to_string() }),
+                ("KV Cache (K-Type)", cache_types[app.cache_k_idx].to_string()),
+                ("KV Cache (V-Type)", cache_types[app.cache_v_idx].to_string()),
+            ],
+            1 => vec![
+                ("RoPE Base", app.rope_base.to_string()),
+                ("RoPE Scale", format!("{:.1}", app.rope_scale)),
+                ("Defrag Threshold", format!("{:.1}", app.defrag_thold)),
+                ("Draft Max", app.draft_max.to_string()),
+                ("Draft Min", app.draft_min.to_string()),
+                ("Prompt Cache (Disk)", if app.prompt_cache { "ON".to_string() } else { "OFF".to_string() }),
+                ("Prompt Cache All", if app.prompt_cache_all { "ON".to_string() } else { "OFF".to_string() }),
+            ],
+            _ => vec![
+                ("Temperature", format!("{:.2}", app.temp)),
+                ("Top K", app.top_k.to_string()),
+                ("Top P", format!("{:.2}", app.top_p)),
+                ("Min P", format!("{:.2}", app.min_p)),
+                ("Repetition Penalty", format!("{:.2}", app.rep_pen)),
+            ],
+        };
+
+        for (i, (label, val)) in items.iter().enumerate() {
+            let style = if i == app.tuner_selected {
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            
+            // Format layout so the values perfectly align like in your screenshot
+            let pad = 24usize.saturating_sub(label.len());
+            let pad_str = " ".repeat(pad);
+            let val_pad = 10usize.saturating_sub(val.len());
+            let val_pad_str = " ".repeat(val_pad);
+
+            let line_str = format!("  {}:{}{}{}[< / >]  ", label, pad_str, val, val_pad_str);
+            list_items.push(Line::from(Span::styled(line_str, style)).alignment(ratatui::layout::Alignment::Center));
+        }
+
+        let bottom_text = Line::from(vec![
+            Span::raw("[TAB] Next Page    |    [ENTER] Apply    |    [ESC] Cancel"),
+        ]).alignment(ratatui::layout::Alignment::Center);
+
+        let tuner_block = Paragraph::new(list_items)
+            .block(Block::default()
+                .title(format!(" Deep router.ini Tuner [Page {}/3] ", app.tuner_page + 1))
+                .title_bottom(bottom_text)
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Cyan)))
+            .alignment(ratatui::layout::Alignment::Center);
+            
+        f.render_widget(tuner_block, area);
+    }
+
+    // 7. Interactive Help Overlay
     if app.show_help {
         let area = centered_rect_absolute(65, 22, f.area());
         f.render_widget(Clear, area);
@@ -511,10 +345,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from("  [g] GPU Metrics | [c] CPU & RAM Metrics"),
             Line::from(""),
             Line::from(Span::styled(" --- Orchestration & Tuning ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from("  [m] Target Model Selector"),
+            Line::from("  [Tab] Toggle Bottom Deck (Interrogator vs Hot-Swap)"), // <-- UPDATED
             Line::from("  [t] Config Tuner (ngl, ctx, threads, batch, parallel)"),
-            Line::from("  [i] API Interrogator (Press Esc to exit Insert Mode)"),
-            Line::from("  [Up/Dn] Cycle Interrogator Payload History"),
+            Line::from("  [i] Focus Active Deck (Press Esc to cancel)"),         // <-- UPDATED
+            Line::from("  [Up/Dn] Cycle Logs / Payloads / Sniper Targets"),      // <-- UPDATED
             Line::from(""),
             Line::from(Span::styled(" --- Daemon Control (Requires Sudo) ---", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  [Shift+S] Start Daemon   | [Shift+X] Stop Daemon"),
@@ -529,7 +363,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let popup_block = Paragraph::new(help_text)
             .block(Block::default().title(" Saltnitor Command Manual ").title_bottom(Line::from(Span::styled(" Press [h] or [Esc] to close ", Style::default().fg(Color::DarkGray))).alignment(ratatui::layout::Alignment::Right)).borders(Borders::ALL).style(Style::default().fg(Color::Yellow)))
             .alignment(ratatui::layout::Alignment::Left);
-
         f.render_widget(popup_block, area);
     }
 }

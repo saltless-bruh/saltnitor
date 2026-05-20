@@ -207,12 +207,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cpu_cores: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
             let cpu_load = cpu_cores.iter().sum::<f32>() / cpu_cores.len() as f32;
 
-            // Top 8 System RAM Processes
+            // Top System RAM Culprits (Showing ALL processes > 1MB)
             let mut procs: Vec<_> = sys.processes().values().collect();
             procs.sort_by(|a, b| b.memory().cmp(&a.memory()));
-            let sys_processes: Vec<(String, f64)> = procs.iter().take(8).map(|p| {
-                (p.name().to_string_lossy().to_string(), p.memory() as f64 / 1_073_741_824.0)
-            }).collect();
+            let sys_processes: Vec<(String, f64)> = procs.iter()
+                .filter(|p| p.memory() > 1_048_576) // Filter out tiny < 1MB background threads
+                .map(|p| {
+                    (p.name().to_string_lossy().to_string(), p.memory() as f64 / 1_073_741_824.0)
+                }).collect();
 
             // NVIDIA Metrics (General)
             let mut vram_used = 0.0;
@@ -366,46 +368,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(event) = rx.recv() => {
                 match event {
                     Event::Key(key) => {
-                        if app.show_model_selector {
-                            // --- MODEL SELECTOR CONTROLS ---
-                            match key.code {
-                                KeyCode::Esc | KeyCode::Char('m') => app.show_model_selector = false,
-                                KeyCode::Up => {
-                                    if app.model_selector_index > 0 { app.model_selector_index -= 1; }
-                                }
-                                KeyCode::Down => {
-                                    if app.model_selector_index < app.available_models.len().saturating_sub(1) { app.model_selector_index += 1; }
-                                }
-                                KeyCode::Enter => {
-                                    if !app.available_models.is_empty() {
-                                        let selected_model = &app.available_models[app.model_selector_index];
-                                        
-                                        // --- NEW: Update the active model state ---
-                                        app.active_model = selected_model.clone();
-                                        
-                                        // Auto-inject the selected model into the JSON payload
-                                        app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, selected_model);
-                                        app.add_log(format!(">>> API Target locked to: {}", selected_model));
-                                        app.console_cursor = app.console_input.chars().count();
-                                    }
-                                    app.show_model_selector = false;
-                                }
-                                _ => {}
-                            }
-                        } else if app.show_gpu_inspector {
+                        if app.show_gpu_inspector {
                             // --- PROCESS SNIPER (GPU) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => app.show_gpu_inspector = false,
-                                KeyCode::Up => app.gpu_proc_selected = app.gpu_proc_selected.saturating_sub(1),
-                                KeyCode::Down => { if app.gpu_proc_selected < app.gpu_processes.len().saturating_sub(1) { app.gpu_proc_selected += 1; } }
+                                KeyCode::Up => {
+                                    let i = match app.gpu_proc_state.selected() { Some(i) => if i == 0 { app.gpu_processes.len().saturating_sub(1) } else { i - 1 }, None => 0 };
+                                    app.gpu_proc_state.select(Some(i));
+                                }
+                                KeyCode::Down => {
+                                    let i = match app.gpu_proc_state.selected() { Some(i) => if i >= app.gpu_processes.len().saturating_sub(1) { 0 } else { i + 1 }, None => 0 };
+                                    app.gpu_proc_state.select(Some(i));
+                                }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some((name, _)) = app.gpu_processes.get(app.gpu_proc_selected) {
-                                        let proc_name = name.clone();
-                                        if proc_name == "saltnitor" || proc_name.contains("llama-server") {
-                                            app.add_log(">>> PROCESS SNIPER: Access Denied. Cannot assassinate critical daemon.".to_string());
-                                        } else {
-                                            app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                            tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                    if let Some(i) = app.gpu_proc_state.selected() {
+                                        if let Some((name, _)) = app.gpu_processes.get(i) {
+                                            let proc_name = name.clone();
+                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
+                                            else {
+                                                app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
+                                                tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                            }
                                         }
                                     }
                                 }
@@ -415,35 +398,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // --- PROCESS SNIPER (CPU/RAM) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => app.show_sys_inspector = false,
-                                KeyCode::Up => app.sys_proc_selected = app.sys_proc_selected.saturating_sub(1),
-                                KeyCode::Down => { if app.sys_proc_selected < app.sys_processes.len().saturating_sub(1) { app.sys_proc_selected += 1; } }
+                                KeyCode::Up => {
+                                    let i = match app.sys_proc_state.selected() { Some(i) => if i == 0 { app.sys_processes.len().saturating_sub(1) } else { i - 1 }, None => 0 };
+                                    app.sys_proc_state.select(Some(i));
+                                }
+                                KeyCode::Down => {
+                                    let i = match app.sys_proc_state.selected() { Some(i) => if i >= app.sys_processes.len().saturating_sub(1) { 0 } else { i + 1 }, None => 0 };
+                                    app.sys_proc_state.select(Some(i));
+                                }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some((name, _)) = app.sys_processes.get(app.sys_proc_selected) {
-                                        let proc_name = name.clone();
-                                        if proc_name == "saltnitor" || proc_name.contains("llama-server") {
-                                            app.add_log(">>> PROCESS SNIPER: Access Denied. Cannot assassinate critical daemon.".to_string());
-                                        } else {
-                                            app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                            tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                    if let Some(i) = app.sys_proc_state.selected() {
+                                        if let Some((name, _)) = app.sys_processes.get(i) {
+                                            let proc_name = name.clone();
+                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
+                                            else {
+                                                app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
+                                                tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                            }
                                         }
                                     }
                                 }
                                 _ => {}
                             }
                         } else if app.show_tuner {
-                            // --- DEEP TUNER MENU CONTROLS ---
+                            // --- DEEP TUNER MENU CONTROLS (Keep exact same as before) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
-                                KeyCode::Tab => {
-                                    app.tuner_page = (app.tuner_page + 1) % 3; // Cycle 0, 1, 2
-                                    app.tuner_selected = 0; // Reset cursor to top
-                                }
+                                KeyCode::Tab => { app.tuner_page = (app.tuner_page + 1) % 3; app.tuner_selected = 0; }
                                 KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
-                                KeyCode::Down => {
-                                    // Limit bounds based on the active page
-                                    let max_idx = match app.tuner_page { 0 => 9, 1 => 6, 2 => 4, _ => 0 };
-                                    if app.tuner_selected < max_idx { app.tuner_selected += 1; }
-                                }
+                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 6, 2 => 4, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
                                 KeyCode::Left | KeyCode::Right => {
                                     let is_right = key.code == KeyCode::Right;
                                     match app.tuner_page {
@@ -487,9 +470,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
                                     let ini_content = format!(
                                         "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
-                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
-                                        app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                        app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
+                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel, app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx], app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
                                     );
                                     app.add_log(format!(">>> DEEP CONFIG APPLIED: Page 1-3 Saved to router.ini"));
                                     app.show_tuner = false;
@@ -498,161 +479,194 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 _ => {}
                             }
                         } else if app.console_focused {
-                            // --- API INTERROGATOR CONTROLS ---
-                            match key.code {
-                                KeyCode::Esc => app.console_focused = false, // Exit insert mode
-                                KeyCode::Left => {
-                                    if app.console_cursor > 0 { app.console_cursor -= 1; }
-                                }
-                                KeyCode::Right => {
-                                    if app.console_cursor < app.console_input.chars().count() { app.console_cursor += 1; }
-                                }
-                                KeyCode::Up => {
-                                    if !app.console_history.is_empty() && app.history_index > 0 {
-                                        app.history_index -= 1;
-                                        app.console_input = app.console_history[app.history_index].clone();
-                                        app.console_cursor = app.console_input.chars().count(); // Snap cursor to end
+                            // --- NEW: DUAL-MODE BOTTOM DECK CONTROLS ---
+                            if app.bottom_tab_mode == 1 { // HOT-SWAP MODE
+                                match key.code {
+                                    KeyCode::Esc => app.console_focused = false,
+                                    KeyCode::Up => {
+                                        let i = match app.hot_swap_state.selected() {
+                                            Some(i) => if i == 0 { app.available_models.len().saturating_sub(1) } else { i - 1 },
+                                            None => 0,
+                                        };
+                                        app.hot_swap_state.select(Some(i));
                                     }
-                                }
-                                KeyCode::Down => {
-                                    if app.history_index < app.console_history.len() {
-                                        app.history_index += 1;
-                                        if app.history_index == app.console_history.len() {
-                                            app.console_input = String::new(); // Clear when cycling past the newest
-                                        } else {
-                                            app.console_input = app.console_history[app.history_index].clone();
-                                        }
-                                        app.console_cursor = app.console_input.chars().count();
+                                    KeyCode::Down => {
+                                        let i = match app.hot_swap_state.selected() {
+                                            Some(i) => if i >= app.available_models.len().saturating_sub(1) { 0 } else { i + 1 },
+                                            None => 0,
+                                        };
+                                        app.hot_swap_state.select(Some(i));
                                     }
-                                }
-                                KeyCode::Char(c) => {
-                                    // Insert character exactly at the cursor position
-                                    let mut chars: Vec<char> = app.console_input.chars().collect();
-                                    chars.insert(app.console_cursor, c);
-                                    app.console_input = chars.into_iter().collect();
-                                    app.console_cursor += 1;
-                                }
-                                KeyCode::Backspace => {
-                                    if app.console_cursor > 0 {
-                                        let mut chars: Vec<char> = app.console_input.chars().collect();
-                                        chars.remove(app.console_cursor - 1);
-                                        app.console_input = chars.into_iter().collect();
-                                        app.console_cursor -= 1;
-                                    }
-                                }
-                                KeyCode::Delete => {
-                                    let mut chars: Vec<char> = app.console_input.chars().collect();
-                                    if app.console_cursor < chars.len() {
-                                        chars.remove(app.console_cursor);
-                                        app.console_input = chars.into_iter().collect();
-                                    }
-                                }
-                                KeyCode::Enter => {
-                                    // --- Add to History Buffer ---
-                                    if !app.console_input.trim().is_empty() {
-                                        if app.console_history.is_empty() || app.console_history.last() != Some(&app.console_input) {
-                                            app.console_history.push(app.console_input.clone());
-                                            if app.console_history.len() > 10 {
-                                                app.console_history.remove(0); // Keep max 10 entries
+                                    KeyCode::Enter => {
+                                        if let Some(i) = app.hot_swap_state.selected() {
+                                            if let Some(chosen_model) = app.available_models.get(i).cloned() {
+                                                app.console_focused = false;
+                                                
+                                                // 1. Calculate NGL
+                                                let mut auto_ngl = 99;
+                                                let model_upper = chosen_model.to_uppercase();
+                                                for word in model_upper.replace("-", " ").replace("_", " ").split_whitespace() {
+                                                    if word.ends_with("B") {
+                                                        if let Ok(p) = word.trim_end_matches('B').parse::<f64>() {
+                                                            if p > 14.0 { auto_ngl = 24; } 
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                // 2. Lock State
+                                                app.current_ngl = auto_ngl;
+                                                app.active_model = chosen_model.clone();
+                                                app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, chosen_model);
+                                                app.console_cursor = app.console_input.chars().count();
+                                                
+                                                // 3. Generate INI Payload
+                                                let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
+                                                let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
+                                                let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
+                                                let ini_content = format!(
+                                                    "[model]\nmodel = {}\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                                    chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
+                                                    app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
+                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, 
+                                                    p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
+                                                );
+                                                
+                                                // 4. Restart Daemon
+                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. NGL: {}. Restarting Daemon.", chosen_model, auto_ngl));
+                                                let svc_name = app.service_name.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = tokio::fs::write("router.ini", ini_content).await;
+                                                    let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
+                                                });
                                             }
                                         }
-                                        app.history_index = app.console_history.len();
                                     }
-
-                                    // Lock the UI briefly to show loading state
-                                    app.last_api_result = "Sending payload...".to_string();
-                                    app.last_ttft = 0;
-                                    
-                                    // Clone data to move into the async worker
-                                    let payload = app.console_input.clone();
-                                    let tx_api = tx.clone();
-
-                                    let host_api = app.host.clone();
-                                    let port_api = app.port;
-
-                                    tokio::spawn(async move {
-                                        let client = Client::new();
-                                        let start = Instant::now();
-                                        let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
-                                        
-                                        // --- Secretly inject "stream": true into the user's payload ---
-                                        let mut payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
-                                        if let Some(obj) = payload_json.as_object_mut() {
-                                            obj.insert("stream".to_string(), serde_json::json!(true));
+                                    _ => {}
+                                }
+                            } else { // INTERROGATOR MODE
+                                match key.code {
+                                    KeyCode::Esc => app.console_focused = false, // Exit insert mode
+                                    KeyCode::Left => { if app.console_cursor > 0 { app.console_cursor -= 1; } }
+                                    KeyCode::Right => { if app.console_cursor < app.console_input.chars().count() { app.console_cursor += 1; } }
+                                    KeyCode::Up => {
+                                        if !app.console_history.is_empty() && app.history_index > 0 {
+                                            app.history_index -= 1;
+                                            app.console_input = app.console_history[app.history_index].clone();
+                                            app.console_cursor = app.console_input.chars().count();
                                         }
-                                        let stream_payload = payload_json.to_string();
+                                    }
+                                    KeyCode::Down => {
+                                        if app.history_index < app.console_history.len() {
+                                            app.history_index += 1;
+                                            if app.history_index == app.console_history.len() {
+                                                app.console_input = String::new();
+                                            } else {
+                                                app.console_input = app.console_history[app.history_index].clone();
+                                            }
+                                            app.console_cursor = app.console_input.chars().count();
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        let mut chars: Vec<char> = app.console_input.chars().collect();
+                                        chars.insert(app.console_cursor, c);
+                                        app.console_input = chars.into_iter().collect();
+                                        app.console_cursor += 1;
+                                    }
+                                    KeyCode::Backspace => {
+                                        if app.console_cursor > 0 {
+                                            let mut chars: Vec<char> = app.console_input.chars().collect();
+                                            chars.remove(app.console_cursor - 1);
+                                            app.console_input = chars.into_iter().collect();
+                                            app.console_cursor -= 1;
+                                        }
+                                    }
+                                    KeyCode::Delete => {
+                                        let mut chars: Vec<char> = app.console_input.chars().collect();
+                                        if app.console_cursor < chars.len() {
+                                            chars.remove(app.console_cursor);
+                                            app.console_input = chars.into_iter().collect();
+                                        }
+                                    }
+                                    KeyCode::Enter => {
+                                        if !app.console_input.trim().is_empty() {
+                                            if app.console_history.is_empty() || app.console_history.last() != Some(&app.console_input) {
+                                                app.console_history.push(app.console_input.clone());
+                                                if app.console_history.len() > 10 { app.console_history.remove(0); }
+                                            }
+                                            app.history_index = app.console_history.len();
+                                        }
 
-                                        let response = client.post(&url)
-                                            .header("Content-Type", "application/json")
-                                            .body(stream_payload)
-                                            .send()
-                                            .await;
+                                        app.last_api_result = "Sending payload...".to_string();
+                                        app.last_ttft = 0;
+                                        let payload = app.console_input.clone();
+                                        let tx_api = tx.clone();
+                                        let host_api = app.host.clone();
+                                        let port_api = app.port;
+
+                                        tokio::spawn(async move {
+                                            let client = Client::new();
+                                            let start = Instant::now();
+                                            let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
                                             
-                                        match response {
-                                            Ok(mut res) => {
-                                                let status = res.status().to_string();
-                                                let mut first_token = true;
-                                                let mut total_tokens = 0.0;
-                                                let mut buffer = String::new();
+                                            let mut payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
+                                            if let Some(obj) = payload_json.as_object_mut() {
+                                                obj.insert("stream".to_string(), serde_json::json!(true));
+                                            }
+                                            let stream_payload = payload_json.to_string();
 
-                                                // --- Read the SSE stream chunk by chunk in real-time ---
-                                                while let Ok(Some(chunk)) = res.chunk().await {
-                                                    if first_token {
-                                                        let ttft = start.elapsed().as_millis();
-                                                        let _ = tx_api.send(Event::ApiStreamStart { ttft_ms: ttft }).await;
-                                                        first_token = false;
-                                                    }
+                                            let response = client.post(&url).header("Content-Type", "application/json").body(stream_payload).send().await;
+                                                
+                                            match response {
+                                                Ok(mut res) => {
+                                                    let status = res.status().to_string();
+                                                    let mut first_token = true;
+                                                    let mut total_tokens = 0.0;
+                                                    let mut buffer = String::new();
 
-                                                    // Accumulate chunks and split by newlines safely
-                                                    buffer.push_str(&String::from_utf8_lossy(&chunk));
-                                                    while let Some(idx) = buffer.find('\n') {
-                                                        let line = buffer[..idx].trim().to_string();
-                                                        buffer = buffer[idx+1..].to_string();
+                                                    while let Ok(Some(chunk)) = res.chunk().await {
+                                                        if first_token {
+                                                            let ttft = start.elapsed().as_millis();
+                                                            let _ = tx_api.send(Event::ApiStreamStart { ttft_ms: ttft }).await;
+                                                            first_token = false;
+                                                        }
+                                                        buffer.push_str(&String::from_utf8_lossy(&chunk));
+                                                        while let Some(idx) = buffer.find('\n') {
+                                                            let line = buffer[..idx].trim().to_string();
+                                                            buffer = buffer[idx+1..].to_string();
 
-                                                        if line.starts_with("data: ") {
-                                                            let data = &line[6..];
-                                                            if data == "[DONE]" { continue; }
-                                                            
-                                                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                                                                if let Some(content) = json.get("choices")
-                                                                    .and_then(|c| c.get(0))
-                                                                    .and_then(|c| c.get("delta"))
-                                                                    .and_then(|d| d.get("content"))
-                                                                    .and_then(|c| c.as_str()) 
-                                                                {
-                                                                    let clean_token = content.replace('\n', " ⏎ ");
-                                                                    let _ = tx_api.send(Event::ApiStreamChunk(clean_token)).await;
-                                                                    total_tokens += 1.0;
+                                                            if line.starts_with("data: ") {
+                                                                let data = &line[6..];
+                                                                if data == "[DONE]" { continue; }
+                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                                                                    if let Some(content) = json.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
+                                                                        let clean_token = content.replace('\n', " ⏎ ");
+                                                                        let _ = tx_api.send(Event::ApiStreamChunk(clean_token)).await;
+                                                                        total_tokens += 1.0;
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
+                                                    let total_time_s = start.elapsed().as_millis() as f64 / 1000.0;
+                                                    let gen_tps = if total_time_s > 0.0 { total_tokens / total_time_s } else { 0.0 };
+                                                    let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps, status }).await;
                                                 }
-
-                                                // Calculate generation speed
-                                                let total_time_s = start.elapsed().as_millis() as f64 / 1000.0;
-                                                let gen_tps = if total_time_s > 0.0 { total_tokens / total_time_s } else { 0.0 };
-                                                let eval_tps = 0.0; // Streaming obscures prompt eval times, so we omit it to avoid faking data
-
-                                                let _ = tx_api.send(Event::ApiStreamEnd { eval_tps, gen_tps, status }).await;
+                                                Err(e) => {
+                                                    let _ = tx_api.send(Event::ApiStreamChunk(format!("ERROR: {}", e))).await;
+                                                    let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps: 0.0, status: "500".to_string() }).await;
+                                                }
                                             }
-                                            Err(e) => {
-                                                let _ = tx_api.send(Event::ApiStreamChunk(format!("ERROR: {}", e))).await;
-                                                let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps: 0.0, status: "500".to_string() }).await;
-                                            }
-                                        }
-                                    });
+                                        });
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         } else if app.show_help {
-                            // --- HELP OVERLAY CONTROLS ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('h') | KeyCode::Char('q') => app.show_help = false,
                                 _ => {}
                             }
                         } else if app.is_searching {
-                            // --- NEW: LOG SEARCH CONTROLS ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Enter => app.is_searching = false,
                                 KeyCode::Backspace => { app.search_query.pop(); }
@@ -665,41 +679,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('q') => app.should_quit = true,
                                 KeyCode::Char('t') => app.show_tuner = true,
                                 KeyCode::Char('i') => app.console_focused = true,
-                                KeyCode::Char('m') => app.show_model_selector = true,
+                                KeyCode::Tab => app.bottom_tab_mode = (app.bottom_tab_mode + 1) % 2,
                                 KeyCode::Char('g') => { app.show_gpu_inspector = !app.show_gpu_inspector; app.show_sys_inspector = false; },
                                 KeyCode::Char('c') => { app.show_sys_inspector = !app.show_sys_inspector; app.show_gpu_inspector = false; },
                                 KeyCode::Char('/') => { app.is_searching = true; app.search_query.clear(); },
                                 KeyCode::Char('h') => app.show_help = true,
                                 KeyCode::PageUp => app.scroll_logs_up(),
                                 KeyCode::PageDown => app.scroll_logs_down(),
+                                KeyCode::Esc => { app.show_gpu_inspector = false; app.show_sys_inspector = false; },
                                 
-                                // Dynamic Systemctl Bindings
-                                KeyCode::Char('S') => { // Capital S
+                                KeyCode::Char('S') => { 
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Starting {}...", svc));
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "start", &svc]).output().await; });
                                 }
-                                KeyCode::Char('X') => { // Capital X
+                                KeyCode::Char('X') => { 
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Stopping {}...", svc));
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await; });
                                 }
-                                KeyCode::Char('R') => { // Capital R
+                                KeyCode::Char('R') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Restarting {}...", svc));
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc]).output().await; });
                                 }
-                                
                                 KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                     app.add_log(">>> TACTICAL KILL-SWITCH ENGAGED...".to_string());
                                     tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "killall", "-9", "llama-server"]).output().await; });
                                 }
-
                                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    // Crash Dump (Unchanged)
                                     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                                     let filename = format!("crash_dump_{}.txt", timestamp);
-                                    
-                                    // Gather state data
                                     let active_model = app.active_model.clone();
                                     let vram_used = app.vram_used;
                                     let vram_total = app.vram_total;
@@ -711,27 +722,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let logs: Vec<String> = app.logs.iter().cloned().collect();
 
                                     app.add_log(format!(">>> INITIATING CRASH DUMP -> {}", filename));
-
-                                    // Spawn async task to write the file
                                     tokio::spawn(async move {
                                         use tokio::io::AsyncWriteExt;
                                         let mut content = String::new();
-                                        content.push_str(&format!("--- SALTNITOR CRASH DUMP [{}] ---\n\n", timestamp));
-                                        content.push_str(&format!("TARGET MODEL: {}\n", active_model));
-                                        content.push_str(&format!("VRAM USAGE:   {:.2} / {:.2} GB\n", vram_used, vram_total));
-                                        content.push_str(&format!("RAM USAGE:    {:.2} / {:.2} GB\n", ram_used, ram_total));
-                                        content.push_str(&format!("GPU TEMP:     {} C\n", gpu_temp));
-                                        content.push_str(&format!("GPU POWER:    {}\n", gpu_power));
-                                        content.push_str(&format!("CPU LOAD:     {}%\n\n", cpu_load));
-                                        
-                                        content.push_str("--- RECENT LOGS (100 LINES) ---\n");
-                                        for log in logs {
-                                            content.push_str(&format!("{}\n", log));
-                                        }
-
-                                        if let Ok(mut file) = tokio::fs::File::create(&filename).await {
-                                            let _ = file.write_all(content.as_bytes()).await;
-                                        }
+                                        content.push_str(&format!("--- SALTNITOR CRASH DUMP [{}] ---\n\nTARGET MODEL: {}\nVRAM USAGE:   {:.2} / {:.2} GB\nRAM USAGE:    {:.2} / {:.2} GB\nGPU TEMP:     {} C\nGPU POWER:    {}\nCPU LOAD:     {}%\n\n--- RECENT LOGS ---\n", timestamp, active_model, vram_used, vram_total, ram_used, ram_total, gpu_temp, gpu_power, cpu_load));
+                                        for log in logs { content.push_str(&format!("{}\n", log)); }
+                                        if let Ok(mut file) = tokio::fs::File::create(&filename).await { let _ = file.write_all(content.as_bytes()).await; }
                                     });
                                 }
                                 _ => {}
@@ -765,11 +761,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.console_cursor = app.console_input.chars().count();
                         }
                         
-                        // Ensure index doesn't go out of bounds if a model is removed
-                        if app.model_selector_index >= app.available_models.len() && !app.available_models.is_empty() {
-                            app.model_selector_index = app.available_models.len() - 1;
+                        // --- FIXED: Prevent out-of-bounds using the new Hot-Swap ListState ---
+                        if let Some(selected) = app.hot_swap_state.selected() {
+                            if selected >= app.available_models.len() && !app.available_models.is_empty() {
+                                // If the list shrank, snap the cursor to the bottom
+                                app.hot_swap_state.select(Some(app.available_models.len() - 1));
+                            } else if app.available_models.is_empty() {
+                                // If all models were deleted, clear the cursor
+                                app.hot_swap_state.select(None);
+                            }
+                        } else if !app.available_models.is_empty() {
+                            // If we just booted and have models, initialize the cursor at index 0
+                            app.hot_swap_state.select(Some(0));
                         }
-                    } 
+                    }
                     Event::PortAudit(status) => {
                         app.port_status = status;
                     }
@@ -789,9 +794,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.gpu_clocks = gpu_clocks;
                         app.sys_uptime = sys_uptime;
 
-                        if app.cpu_history.len() >= 100 {
-                            app.cpu_history.remove(0);
-                        }
+                        // Clamp GPU State
+                        if let Some(selected) = app.gpu_proc_state.selected() {
+                            if selected >= app.gpu_processes.len() && !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(app.gpu_processes.len() - 1)); } 
+                            else if app.gpu_processes.is_empty() { app.gpu_proc_state.select(None); }
+                        } else if !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(0)); }
+
+                        // Clamp Sys State
+                        if let Some(selected) = app.sys_proc_state.selected() {
+                            if selected >= app.sys_processes.len() && !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(app.sys_processes.len() - 1)); } 
+                            else if app.sys_processes.is_empty() { app.sys_proc_state.select(None); }
+                        } else if !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(0)); }
+
+                        if app.cpu_history.len() >= 100 { app.cpu_history.remove(0); }
                         app.cpu_history.push(cpu_load);
                     }
                     Event::LogLine(line) => {
