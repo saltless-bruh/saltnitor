@@ -475,16 +475,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::Enter => {
                                     let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
-                                    let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
-                                    let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
+                                    
+                                    // --- Grab the currently active model from state ---
+                                    let active_model = app.active_model.clone();
+                                    
                                     let turbo_quant_val = if app.turbo_quant { "true" } else { "false" };
-                                    let ini_content = format!(
-                                        "[model]\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nturbo-quant = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
-                                        app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel, app.flash_attn, app.mlock, turbo_quant_val, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx], app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
+                                    
+                                    // Generate Native Linux .ENV Payload
+                                    let env_content = format!(
+                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nTURBO_QUANT={}\nCACHE_K={}\nCACHE_V={}\nTEMP={}\nTOP_K={}\nTOP_P={}\n", 
+                                        active_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
+                                        app.flash_attn, app.mlock, app.no_mmap, turbo_quant_val, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
+                                        app.temp, app.top_k, app.top_p
                                     );
-                                    app.add_log(format!(">>> DEEP CONFIG APPLIED: Page 1-3 Saved to router.ini"));
-                                    app.show_tuner = false;
-                                    tokio::spawn(async move { let _ = tokio::fs::write("router.ini", ini_content).await; });
+                                    
+                                    app.add_log(format!(">>> DEEP CONFIG APPLIED: Saved to router.env. Restarting Daemon..."));
+                                    app.show_tuner = false; // Close the Tuner UI
+                                    let svc_name = app.service_name.clone();
+                                    
+                                    tokio::spawn(async move {
+                                        // Overwrite the .env file and bounce the service
+                                        let _ = tokio::fs::write("router.env", env_content).await;
+                                        let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
+                                    });
                                 }
                                 _ => {}
                             }
@@ -531,18 +544,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 
                                                 // 3. Generate INI Payload
                                                 let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
-                                                let p_cache_val = if app.prompt_cache { "prompt_cache.bin" } else { "" };
-                                                let p_cache_all_val = if app.prompt_cache_all { "true" } else { "false" };
-                                                let turbo_quant_val = if app.turbo_quant { "true" } else { "false" };
-                                                let ini_content = format!(
-                                                    "[model]\nmodel = {}\nngl = {}\nctx-size = {}\nthreads = {}\nn-batch = {}\nparallel = {}\nflash-attn = {}\nmlock = {}\nturbo-quant = {}\nno-mmap = {}\ncache-type-k = {}\ncache-type-v = {}\nrope-freq-base = {}\nrope-scale = {}\ndefrag-thold = {}\ndraft-max = {}\nprompt-cache = {}\nprompt-cache-all = {}\ntemperature = {}\ntop-k = {}\ntop-p = {}\n", 
+                                                let env_content = format!(
+                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nTURBO_QUANT={}\nCACHE_K={}\nCACHE_V={}\nTEMP={}\nTOP_K={}\nTOP_P={}\n", 
                                                     chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
-                                                    app.flash_attn, app.mlock, turbo_quant_val, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.draft_max, 
-                                                    p_cache_val, p_cache_all_val, app.temp, app.top_k, app.top_p
+                                                    app.flash_attn, app.mlock, app.no_mmap, app.turbo_quant, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
+                                                    app.temp, app.top_k, app.top_p
                                                 );
                                                 // 4. Restart Daemon & Trigger VRAM Pre-Load
-                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. NGL: {}. Restarting Daemon...", chosen_model, auto_ngl));
+                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. Restarting Daemon...", chosen_model));
                                                 let svc_name = app.service_name.clone();
                                                 let host_api = app.host.clone();
                                                 let port_api = app.port;
@@ -551,7 +560,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 
                                                 tokio::spawn(async move {
                                                     // Overwrite configs and bounce the service
-                                                    let _ = tokio::fs::write("router.ini", ini_content).await;
+                                                    let _ = tokio::fs::write("router.env", env_content).await;
                                                     let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
                                                     
                                                     // Give systemd and llama-server 3 seconds to spin up the HTTP listener
