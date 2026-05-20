@@ -288,7 +288,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from(""),
         ];
 
-        let cache_types = ["f16", "q8_0", "q4_0", "q4_1"];
+        let cache_types = ["f16", "q8_0", "q4_0", "q4_1", "turbo2", "turbo3", "turbo4"];
         
         let items: Vec<(&str, String)> = match app.tuner_page {
             0 => vec![
@@ -302,7 +302,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 ("No Mem Map (no_mmap)", if app.no_mmap { "ON".to_string() } else { "OFF".to_string() }),
                 ("KV Cache (K-Type)", cache_types[app.cache_k_idx].to_string()),
                 ("KV Cache (V-Type)", cache_types[app.cache_v_idx].to_string()),
-                ("Turbo Quant (TQ)", if app.turbo_quant { "ON".to_string() } else { "OFF".to_string() }),
             ],
             1 => vec![
                 ("RoPE Base", app.rope_base.to_string()),
