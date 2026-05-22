@@ -276,7 +276,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let page_title = match app.tuner_page {
             0 => "COMPUTE & MEMORY",
             1 => "CONTEXT & SPECULATION",
-            _ => "SAMPLING DEFAULTS",
+            _ => "ORCHESTRATION & SECURITY",
         };
 
         let mut list_items = vec![
@@ -309,15 +309,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 ("Defrag Threshold", format!("{:.1}", app.defrag_thold)),
                 ("Draft Max", app.draft_max.to_string()),
                 ("Draft Min", app.draft_min.to_string()),
-                ("Prompt Cache (Disk)", if app.prompt_cache { "ON".to_string() } else { "OFF".to_string() }),
-                ("Prompt Cache All", if app.prompt_cache_all { "ON".to_string() } else { "OFF".to_string() }),
             ],
             _ => vec![
-                ("Temperature", format!("{:.2}", app.temp)),
-                ("Top K", app.top_k.to_string()),
-                ("Top P", format!("{:.2}", app.top_p)),
-                ("Min P", format!("{:.2}", app.min_p)),
-                ("Repetition Penalty", format!("{:.2}", app.rep_pen)),
+                ("Threads per Batch", app.threads_batch.to_string()),
+                ("U-Batch Size", app.ubatch_size.to_string()),
+                ("Continuous Batching", if app.cont_batching { "ON".to_string() } else { "OFF".to_string() }),
+                ("Context Shift", if app.ctx_shift { "ON".to_string() } else { "OFF".to_string() }),
+                ("Metrics", if app.metrics { "ON".to_string() } else { "OFF".to_string() }),
+                ("API Key", if app.api_key { "ON".to_string() } else { "OFF".to_string() }),
             ],
         };
 
@@ -344,7 +343,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
         let tuner_block = Paragraph::new(list_items)
             .block(Block::default()
-                .title(format!(" Deep router.ini Tuner [Page {}/3] ", app.tuner_page + 1))
+                .title(format!(" Deep router.env Tuner [Page {}/3] ", app.tuner_page + 1))
                 .title_bottom(bottom_text)
                 .borders(Borders::ALL)
                 .style(Style::default().fg(Color::Cyan)))

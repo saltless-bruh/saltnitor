@@ -434,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
                                 KeyCode::Tab => { app.tuner_page = (app.tuner_page + 1) % 3; app.tuner_selected = 0; }
                                 KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
-                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 6, 2 => 4, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
+                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 4, 2 => 5, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
                                 KeyCode::Left | KeyCode::Right => {
                                     let is_right = key.code == KeyCode::Right;
                                     match app.tuner_page {
@@ -457,18 +457,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             2 => if is_right && app.defrag_thold < 1.0 { app.defrag_thold += 0.1; } else if !is_right && app.defrag_thold > -1.0 { app.defrag_thold -= 0.1; },
                                             3 => if is_right { app.draft_max += 1; } else if !is_right && app.draft_max > 1 { app.draft_max -= 1; },
                                             4 => if is_right { app.draft_min += 1; } else if !is_right && app.draft_min > 1 { app.draft_min -= 1; },
-                                            5 => { app.prompt_cache = !app.prompt_cache; },
-                                            6 => { app.prompt_cache_all = !app.prompt_cache_all; },
                                             _ => {}
                                         },
                                         2 => match app.tuner_selected {
-                                            0 => if is_right && app.temp < 2.0 { app.temp += 0.1; } else if !is_right && app.temp > 0.0 { app.temp -= 0.1; },
-                                            1 => if is_right { app.top_k += 5; } else if !is_right && app.top_k > 0 { app.top_k -= 5; },
-                                            2 => if is_right && app.top_p < 1.0 { app.top_p += 0.05; } else if !is_right && app.top_p > 0.0 { app.top_p -= 0.05; },
-                                            3 => if is_right && app.min_p < 1.0 { app.min_p += 0.05; } else if !is_right && app.min_p > 0.0 { app.min_p -= 0.05; },
-                                            4 => if is_right && app.rep_pen < 2.0 { app.rep_pen += 0.05; } else if !is_right && app.rep_pen > 1.0 { app.rep_pen -= 0.05; },
+                                            0 => if is_right && app.threads_batch < app.cpu_core_count { app.threads_batch += 1; } else if !is_right && app.threads_batch > 1 { app.threads_batch -= 1; },
+                                            1 => if is_right && app.ubatch_size < app.current_batch { app.ubatch_size *= 2; } else if !is_right && app.ubatch_size > 32 { app.ubatch_size /= 2; },
+                                            2 => { app.cont_batching = !app.cont_batching; },
+                                            3 => { app.ctx_shift = !app.ctx_shift; },
+                                            4 => { app.metrics = !app.metrics; },
+                                            5 => { app.api_key = !app.api_key; },
                                             _ => {}
-                                        },
+                                        }, 
                                         _ => {}
                                     }
                                 }
@@ -480,10 +479,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     
                                     // Generate Native Linux .ENV Payload
                                     let env_content = format!(
-                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nTEMP={}\nTOP_K={}\nTOP_P={}\n", 
+                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\n", 
                                         active_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
                                         app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                        app.temp, app.top_k, app.top_p
+                                        app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key
                                     );
                                     
                                     app.add_log(format!(">>> DEEP CONFIG APPLIED: Saved to router.env. Restarting Daemon..."));
@@ -541,13 +540,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 
                                                 // 3. Generate INI Payload
                                                 let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
-
                                                 let env_content = format!(
-                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nTEMP={}\nTOP_K={}\nTOP_P={}\n", 
+                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\n", 
                                                     chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
                                                     app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                                    app.temp, app.top_k, app.top_p
-                                                );
+                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key
+                                                    );
+                                                
                                                 // 4. Restart Daemon & Trigger VRAM Pre-Load
                                                 app.add_log(format!(">>> FAST-SWAP: Locked [{}]. Restarting Daemon...", chosen_model));
                                                 let svc_name = app.service_name.clone();
@@ -556,6 +555,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let warmup_model = chosen_model.clone();
                                                 let tx_warmup = tx.clone();
                                                 
+                                                let use_api_key = app.api_key;
                                                 tokio::spawn(async move {
                                                     // Overwrite configs and bounce the service
                                                     let _ = tokio::fs::write("/home/laz/ai-models/llama.cpp/router.env", env_content).await;
@@ -572,7 +572,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     // We request just 1 max_token so it loads the VRAM but doesn't waste CPU time generating a long response
                                                     let payload = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "warmup"}}], "max_tokens": 1}}"#, warmup_model);
                                                     
-                                                    if let Ok(res) = client.post(&url).header("Content-Type", "application/json").body(payload).send().await {
+                                                    let mut req = client.post(&url).header("Content-Type", "application/json");
+                                                    if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
+                                                        
+                                                    if let Ok(res) = req.body(payload).send().await {
                                                         if res.status().is_success() {
                                                             let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP: VRAM Warm-Up Successful. Model is locked and ready.".to_string())).await;
                                                         } else {
@@ -647,6 +650,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let host_api = app.host.clone();
                                         let port_api = app.port;
 
+                                        let use_api_key = app.api_key;
                                         tokio::spawn(async move {
                                             let client = Client::new();
                                             let start = Instant::now();
@@ -658,7 +662,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             let stream_payload = payload_json.to_string();
 
-                                            let response = client.post(&url).header("Content-Type", "application/json").body(stream_payload).send().await;
+                                            let mut req = client.post(&url).header("Content-Type", "application/json");
+                                            if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
+                                            let response = req.body(stream_payload).send().await;
                                                 
                                             match response {
                                                 Ok(mut res) => {
