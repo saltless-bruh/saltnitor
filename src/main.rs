@@ -434,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
                                 KeyCode::Tab => { app.tuner_page = (app.tuner_page + 1) % 3; app.tuner_selected = 0; }
                                 KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
-                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 4, 2 => 5, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
+                                KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 5, 2 => 5, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
                                 KeyCode::Left | KeyCode::Right => {
                                     let is_right = key.code == KeyCode::Right;
                                     match app.tuner_page {
@@ -457,6 +457,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             2 => if is_right && app.defrag_thold < 1.0 { app.defrag_thold += 0.1; } else if !is_right && app.defrag_thold > -1.0 { app.defrag_thold -= 0.1; },
                                             3 => if is_right { app.draft_max += 1; } else if !is_right && app.draft_max > 1 { app.draft_max -= 1; },
                                             4 => if is_right { app.draft_min += 1; } else if !is_right && app.draft_min > 1 { app.draft_min -= 1; },
+                                            5 => if is_right && app.draft_model_idx < app.available_models.len() { app.draft_model_idx += 1; } else if !is_right && app.draft_model_idx > 0 { app.draft_model_idx -= 1; },
                                             _ => {}
                                         },
                                         2 => match app.tuner_selected {
@@ -478,11 +479,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let active_model = app.active_model.clone();
                                     
                                     // Generate Native Linux .ENV Payload
+                                    let draft_model_val = if app.draft_model_idx > 0 && app.draft_model_idx <= app.available_models.len() {
+                                        app.available_models[app.draft_model_idx - 1].clone()
+                                    } else {
+                                        "".to_string()
+                                    };
                                     let env_content = format!(
-                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\n", 
+                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\nDRAFT_MODEL={}\n", 
                                         active_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
                                         app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                        app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key
+                                        app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key, draft_model_val
                                     );
                                     
                                     app.add_log(format!(">>> DEEP CONFIG APPLIED: Saved to router.env. Restarting Daemon..."));
@@ -539,12 +545,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 app.console_cursor = app.console_input.chars().count();
                                                 
                                                 // 3. Generate INI Payload
+                                                let draft_model_val = if app.draft_model_idx > 0 && app.draft_model_idx <= app.available_models.len() {
+                                                    app.available_models[app.draft_model_idx - 1].clone()
+                                                } else {
+                                                    "".to_string()
+                                                };
                                                 let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
                                                 let env_content = format!(
-                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\n", 
+                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\nDRAFT_MODEL={}\n", 
                                                     chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
                                                     app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key
+                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key, draft_model_val
                                                     );
                                                 
                                                 // 4. Restart Daemon & Trigger VRAM Pre-Load

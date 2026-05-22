@@ -303,13 +303,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 ("KV Cache (K-Type)", cache_types[app.cache_k_idx].to_string()),
                 ("KV Cache (V-Type)", cache_types[app.cache_v_idx].to_string()),
             ],
-            1 => vec![
-                ("RoPE Base", app.rope_base.to_string()),
-                ("RoPE Scale", format!("{:.1}", app.rope_scale)),
-                ("Defrag Threshold", format!("{:.1}", app.defrag_thold)),
-                ("Draft Max", app.draft_max.to_string()),
-                ("Draft Min", app.draft_min.to_string()),
-            ],
+            1 => {
+                let draft_model_str = if app.draft_model_idx == 0 || app.available_models.is_empty() {
+                    "None".to_string()
+                } else {
+                    let m = &app.available_models[app.draft_model_idx.saturating_sub(1)];
+                    if m.len() > 18 { format!("{}...", &m[..15]) } else { m.clone() }
+                };
+                vec![
+                    ("RoPE Base", app.rope_base.to_string()),
+                    ("RoPE Scale", format!("{:.1}", app.rope_scale)),
+                    ("Defrag Threshold", format!("{:.1}", app.defrag_thold)),
+                    ("Draft Max", app.draft_max.to_string()),
+                    ("Draft Min", app.draft_min.to_string()),
+                    ("Draft Model (-md)", draft_model_str),
+                ]
+            },
             _ => vec![
                 ("Threads per Batch", app.threads_batch.to_string()),
                 ("U-Batch Size", app.ubatch_size.to_string()),

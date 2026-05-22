@@ -72,6 +72,7 @@ pub struct App {
     pub defrag_thold: f32,
     pub draft_max: i32,
     pub draft_min: i32,
+    pub draft_model_idx: usize,
 
     // Page 3: Orchestration & Security 
     pub threads_batch: usize,
@@ -126,7 +127,7 @@ impl App {
             logs: VecDeque::with_capacity(100), show_tuner: false, tuner_page: 0, tuner_selected: 0,
             current_ngl: default_ngl, current_ctx: default_ctx, current_threads: cpu_core_count.saturating_sub(1).max(1), current_batch: 512, current_parallel: 1, flash_attn: false, mlock: false, no_mmap: false, cache_k_idx: 0, cache_v_idx: 0,
             rope_base: 10000, rope_scale: 1.0, defrag_thold: -1.0, draft_max: 16, draft_min: 5,
-            threads_batch: cpu_core_count, ubatch_size: 128, cont_batching: true, ctx_shift: true, metrics: false, api_key: false,
+            threads_batch: cpu_core_count, ubatch_size: 128, cont_batching: true, ctx_shift: true, metrics: false, api_key: false, draft_model_idx: 0,
             console_focused: false, console_input: r#"{"model": "None", "messages": [{"role": "user", "content": "ping"}]}"#.to_string(), console_cursor: 69, console_history, history_index, last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(), last_ttft: 0, last_eval_tps: 0.0, last_gen_tps: 0.0,
             
             // --- Bottom Deck State ---
