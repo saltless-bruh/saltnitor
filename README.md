@@ -27,13 +27,10 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
         
     - **Deep Engine Tuner (`t`)**: A paginated configuration manifest that generates a native Linux `router.env` file and executes a bash-wrapper translation to control the `llama-server` runtime on the fly:
         - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, micro-batching, parallel slots, Flash Attention, `mlock`, and exact KV Cache quantization algorithms (`q8_0`, `q4_0`, etc.).
-    <img width="515" height="403" alt="image" src="https://github.com/user-attachments/assets/b790cf6f-7288-4890-b11f-e9b79d953055" />
 
         - *Page 2 (Context & Speculation)*: RoPE scaling, VRAM defragmentation thresholds, and Speculative Decoding targets (`-md`).
-    <img width="515" height="403" alt="image" src="https://github.com/user-attachments/assets/6e0f8764-91fc-42ec-b07f-2f4b2f9627a2" />
 
         - *Page 3 (Orchestration & Security)*: Core threading split (`-tb`), Continuous Batching, Context Shifting, and dynamic API Key authorization lock-downs.
-    <img width="515" height="403" alt="image" src="https://github.com/user-attachments/assets/f24cffab-4bb9-4c2c-8736-8605e883fd7e" />
 
 
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
