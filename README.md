@@ -21,7 +21,6 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 
 - **Live Model Orchestration (Dual-Mode Bottom Deck)**:
     - **Auto-Tuning Hot-Swap**: Cycle available `.gguf` models dynamically. Features an intelligent **VRAM Oracle** that heuristically estimates the footprint of a model and warns you of potential OOM crashes before you execute the swap.
-      <img width="513" height="405" alt="image" src="https://github.com/user-attachments/assets/d12f627f-5cd4-47c3-9169-4cfb83beb520" />
         
     - **Deep Engine Tuner (`t`)**: A paginated configuration manifest that generates a native Linux `router.env` file and executes a bash-wrapper translation to control the `llama-server` runtime on the fly:
         - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, micro-batching, parallel slots, Flash Attention, `mlock`, and exact KV Cache quantization algorithms (`q8_0`, `q4_0`, etc.).
