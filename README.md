@@ -4,7 +4,8 @@
 
 Designed specifically for developers running `llama.cpp` on Linux, Saltnitor provides real-time deep telemetry, intelligent log analysis, and tactical control in a single, ultra-lightweight binary. It also exposes an **OpenAI-compatible control endpoint**, so any IDE or AI coding agent that speaks the OpenAI chat API (Pi, OpenCode, Cline, Aider, Continue, …) can drive **automatic model hot-swaps** just by addressing different models.
 
-<img width="1920" height="1044" alt="image" src="https://github.com/user-attachments/assets/57a2bc4b-b278-47ec-a0be-63a29af12679" />
+<img width="1920" height="1001" alt="image" src="https://github.com/user-attachments/assets/0b3bd3de-f3aa-4d23-be48-bc446c76a1f1" />
+
 
 ## 🚀 Key Features
 
@@ -13,23 +14,24 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 - **Tactical Hardware Inspectors**:
     - **GPU Deep-Dive (`g`)**: Real-time VRAM allocation, core temperatures, wattage draw, and fan speeds. Includes an active process list to identify exactly which external applications are dominating your VRAM.
       <img width="467" height="401" alt="image" src="https://github.com/user-attachments/assets/c7610f56-9c38-47aa-9ddc-18fa97f29685" />
-
+        
     - **CPU/System Deep-Dive (`c`)**: A balanced 60/40 UI split featuring inline `btop`-style gauges, a dynamic graphical equalizer showing load distribution across all physical/logical threads, and a deduplicated list of top RAM culprits.
-      <img width="552" height="479" alt="image" src="https://github.com/user-attachments/assets/e3897b3a-aac4-49d2-a9d4-6746505c21c0" />
+    <img width="1920" height="154" alt="image" src="https://github.com/user-attachments/assets/70abade2-4e9d-4ada-930f-21d5d9992168" />
 
-- **Automatic Model Hot-Swap (Native Router)**:
-    - Models are declared as `[sections]` in `router.ini`, and `llama-server` runs as a **native router** (`--models-preset router.ini --models-max 1`). Whenever a client requests a model by its section name — your IDE/agent, or Saltnitor's own Interrogator — the router **evicts the resident model and loads the requested one automatically**. No file edits, no restarts, no manual cycling.
-    - **VRAM Oracle**: Saltnitor's control API sits in front of the router and heuristically estimates a model's VRAM/RAM footprint, **refusing a load that would OOM the box** before it happens, then performs the swap (oracle → trigger load → wait until warm) and reflects the new active model live in the TUI.
-    - **Manual pin (Dual-Mode Bottom Deck)**: You can still cycle the available `.gguf` models from the bottom deck and pin one by hand (`Tab` to focus the deck, `Enter` to load) — this calls the exact same guarded load path. The common case, though, is now fully automatic.
+
+- **Live Model Orchestration (Dual-Mode Bottom Deck)**:
+    - **Auto-Tuning Hot-Swap**: Cycle available `.gguf` models dynamically. Features an intelligent **VRAM Oracle** that heuristically estimates the footprint of a model and warns you of potential OOM crashes before you execute the swap.
       <img width="513" height="405" alt="image" src="https://github.com/user-attachments/assets/d12f627f-5cd4-47c3-9169-4cfb83beb520" />
+        
+    - **Deep Engine Tuner (`t`)**: A paginated configuration manifest that generates a native Linux `router.env` file and executes a bash-wrapper translation to control the `llama-server` runtime on the fly:
+        - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, micro-batching, parallel slots, Flash Attention, `mlock`, and exact KV Cache quantization algorithms (`q8_0`, `q4_0`, etc.).
+        - *Page 2 (Context & Speculation)*: RoPE scaling, VRAM defragmentation thresholds, and Speculative Decoding targets (`-md`).
+        - *Page 3 (Orchestration & Security)*: Core threading split (`-tb`), Continuous Batching, Context Shifting, and dynamic API Key authorization lock-downs.
 
-- **Deep Engine Tuner (`t`)**: A paginated configuration manifest that writes the tuned flags **directly into the active model's `router.ini` section** (preserving its `model =` path and all other sections), then restarts the router so they take effect on the fly:
-    - *Page 1 (Compute & Memory)*: `ngl`, `ctx-size`, threads, micro-batching (`batch-size`/`ubatch-size`), parallel slots, Flash Attention, `mlock`, and exact KV Cache quantization algorithms (`q8_0`, `q4_0`, etc.).
-    - *Page 2 (Context)*: RoPE scaling (`rope-freq-base`/`rope-freq-scale`) and VRAM defragmentation thresholds (`defrag-thold`).
-    - *Page 3 (Orchestration)*: Core threading split (`threads-batch`), Continuous Batching, and Context Shifting.
-    > Engine flags are written as `key = value` lines into the section. A few server-wide options (API-key auth, speculative draft) are governed on the router's command line rather than per-section under the native router.
 
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
+    <img width="1920" height="112" alt="image" src="https://github.com/user-attachments/assets/a7174bab-3d79-476e-bcd5-e96a6c64d30a" />
+
     - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
     - **Immune to Self-Lockout**: Dynamically injects Bearer Authentication tokens if the daemon's API Key security wall is engaged.
     - **Persistent Command History**: Bash-style history buffer with inline cursor editing, saved to `.saltnitor_history` on exit.
@@ -37,6 +39,7 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 - **Tactical Incident Response**:
     - **Crash Dumping (`Ctrl+D`)**: Instantly export a post-mortem snapshot of your exact system state (VRAM/RAM pressure, temperatures, active model, and the last 100 log lines) to a timestamped file at `$HOME/saltnitor_crash_<timestamp>.txt`. The full path is printed to the log, and any write failure is reported (no more silent dumps to an unknown directory).
     - **Kill-Switch (`Ctrl+K`)**: A dedicated emergency binding that **stops the `llama-router` unit** (`systemctl stop`). Because the service runs with `Restart=always`, a plain process kill is respawned within seconds — stopping the unit is what actually frees VRAM and keeps it down until you restart it (`Shift+S`).
+
 
 ## 🛠 Prerequisites
 - **OS**: Linux (Optimized for Pop!_OS / Ubuntu / Arch).
