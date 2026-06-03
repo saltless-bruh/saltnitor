@@ -13,10 +13,8 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 
 - **Tactical Hardware Inspectors**:
     - **GPU Deep-Dive (`g`)**: Real-time VRAM allocation, core temperatures, wattage draw, and fan speeds. Includes an active process list to identify exactly which external applications are dominating your VRAM.
-      <img width="467" height="401" alt="image" src="https://github.com/user-attachments/assets/c7610f56-9c38-47aa-9ddc-18fa97f29685" />
         
     - **CPU/System Deep-Dive (`c`)**: A balanced 60/40 UI split featuring inline `btop`-style gauges, a dynamic graphical equalizer showing load distribution across all physical/logical threads, and a deduplicated list of top RAM culprits.
-    <img width="1920" height="154" alt="image" src="https://github.com/user-attachments/assets/70abade2-4e9d-4ada-930f-21d5d9992168" />
 
 
 - **Live Model Orchestration (Dual-Mode Bottom Deck)**:
