@@ -27,7 +27,6 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 
 
 - **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
-    <img width="1920" height="112" alt="image" src="https://github.com/user-attachments/assets/a7174bab-3d79-476e-bcd5-e96a6c64d30a" />
 
     - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
     - **Immune to Self-Lockout**: Dynamically injects Bearer Authentication tokens if the daemon's API Key security wall is engaged.
