@@ -35,4 +35,6 @@ pub enum Event {
     
     ModelsFetched(Vec<String>),
     PortAudit(String),
+    /// Control API → the currently-resident model changed (reflects headless swaps in the TUI)
+    ActiveModelSet(String),
 } 

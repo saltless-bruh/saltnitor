@@ -1,6 +1,7 @@
 mod app;
 mod events;
 mod ui;
+mod control_api;
 
 use serde::Deserialize;
 use app::App;
@@ -14,6 +15,8 @@ use reqwest::Client;
 use std::time::Instant;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{io, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use sysinfo::{System, CpuRefreshKind, RefreshKind, MemoryRefreshKind};
 use tokio::process::Command;
@@ -43,6 +46,15 @@ struct TomlConfig {
     service_name: Option<String>,
     default_ngl: Option<i32>,
     default_ctx: Option<i32>,
+    // --- Control API (native-router edition; Saltcode headless hot-swap bridge) ---
+    control_port: Option<u16>,
+    control_token: Option<String>,
+    router_base: Option<String>,
+    infer_bearer: Option<String>,
+    reserve_vram_gb: Option<f64>,
+    reserve_ram_gb: Option<f64>,
+    #[serde(default)]
+    profiles: HashMap<String, control_api::ProfileMeta>,
 }
 
 // --- Sudo-Aware Config Loader ---
@@ -89,6 +101,43 @@ fn check_dependencies() -> Result<(), String> {
         return Err(format!("Missing critical Linux dependencies: {}", missing.join(", ")));
     }
     Ok(())
+}
+
+/// Upsert `kv` into the `[section]` block of an INI string, preserving every other
+/// line in that section (the `model = ` path, comments, `load-on-startup`,
+/// `override-tensor`, ...) and all other sections untouched. Returns the new file
+/// content, or None if the section header was not found.
+fn upsert_ini_section(content: &str, section: &str, kv: &[(String, String)]) -> Option<String> {
+    let header = format!("[{}]", section);
+    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    let start = lines.iter().position(|l| l.trim() == header)?;
+    let mut end = lines.len();
+    for i in (start + 1)..lines.len() {
+        let t = lines[i].trim();
+        if t.starts_with('[') && t.ends_with(']') { end = i; break; }
+    }
+
+    let mut out: Vec<String> = lines[..=start].to_vec();
+    let mut remaining: Vec<(String, String)> = kv.to_vec();
+    for line in &lines[(start + 1)..end] {
+        let trimmed = line.trim_start();
+        let is_comment = trimmed.starts_with(';') || trimmed.starts_with('#');
+        let key = trimmed.split('=').next().map(str::trim).unwrap_or("");
+        if !is_comment && !key.is_empty() {
+            if let Some(pos) = remaining.iter().position(|(k, _)| k == key) {
+                let (k, v) = remaining.remove(pos);
+                out.push(format!("{} = {}", k, v));
+                continue;
+            }
+        }
+        out.push(line.clone());
+    }
+    for (k, v) in remaining {
+        out.push(format!("{} = {}", k, v));
+    }
+    out.extend_from_slice(&lines[end..]);
+    Some(out.join("\n") + "\n")
 }
 
 #[tokio::main]
@@ -161,6 +210,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_host.clone(), final_port, final_svc.clone(), final_ngl, final_ctx
     );
     let (tx, mut rx) = mpsc::channel::<Event>(100);
+
+    // --- Headless Control API (Saltcode native-router bridge) ---
+    // Sits in front of llama.cpp's native router (--models-preset). Provides the
+    // VRAM oracle + /v1/ensure that the router itself lacks. Binds 127.0.0.1 only.
+    {
+        let controller = Arc::new(control_api::ControlApi::new(
+            toml_conf.profiles.clone(),
+            toml_conf
+                .router_base
+                .clone()
+                .unwrap_or_else(|| format!("http://{}:{}", final_host, final_port)),
+            toml_conf.infer_bearer.clone(),
+            toml_conf.control_token.clone(),
+            toml_conf.reserve_vram_gb.unwrap_or(0.8),
+            toml_conf.reserve_ram_gb.unwrap_or(1.0),
+            tx.clone(),
+        ));
+        let control_port = toml_conf.control_port.unwrap_or(8765);
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], control_port));
+        tokio::spawn(async move { control_api::serve(controller, addr).await; });
+    }
 
     // 5. Start Event Producers (Background Tasks)
     let tx_keys = tx.clone();
@@ -395,7 +465,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
                                             else {
                                                 app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                                tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                                tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
                                             }
                                         }
                                     }
@@ -421,7 +491,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
                                             else {
                                                 app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                                tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").arg("killall").arg("-9").arg(proc_name).output().await; });
+                                                tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
                                             }
                                         }
                                     }
@@ -473,34 +543,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
                                 KeyCode::Enter => {
-                                    let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
-                                    
-                                    // --- Grab the currently active model from state ---
-                                    let active_model = app.active_model.clone();
-                                    
-                                    // Generate Native Linux .ENV Payload
-                                    let draft_model_val = if app.draft_model_idx > 0 && app.draft_model_idx <= app.available_models.len() {
-                                        app.available_models[app.draft_model_idx - 1].clone()
+                                    // Deep Tuner -> router.ini SECTION EDITOR. Writes the tuned flags into
+                                    // the active model's [section] in router.ini (preserving its model path
+                                    // and the other sections), then restarts the router to apply them.
+                                    let section = app.active_model.clone();
+                                    if section.is_empty() || section == "None" {
+                                        app.add_log(">>> TUNER: no active model - select one in the Hot-Swap deck (Tab) before applying.".to_string());
                                     } else {
-                                        "".to_string()
-                                    };
-                                    let env_content = format!(
-                                        "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\nDRAFT_MODEL={}\n", 
-                                        active_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
-                                        app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                        app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key, draft_model_val
-                                    );
-                                    
-                                    app.add_log(format!(">>> DEEP CONFIG APPLIED: Saved to router.env. Restarting Daemon..."));
-                                    app.show_tuner = false; // Close the Tuner UI
-                                    let svc_name = app.service_name.clone();
-                                    
-                                    tokio::spawn(async move {
-                                        // Overwrite the .env file and bounce the service
-                                        let _ = tokio::fs::write("/home/laz/ai-models/llama.cpp/router.env", env_content).await;
-                                        let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
-                                    });
+                                        let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
+                                        let mut kv: Vec<(String, String)> = vec![
+                                            ("ngl".to_string(),             app.current_ngl.to_string()),
+                                            ("ctx-size".to_string(),        app.current_ctx.to_string()),
+                                            ("batch-size".to_string(),      app.current_batch.to_string()),
+                                            ("ubatch-size".to_string(),     app.ubatch_size.to_string()),
+                                            ("threads".to_string(),         app.current_threads.to_string()),
+                                            ("threads-batch".to_string(),   app.threads_batch.to_string()),
+                                            ("parallel".to_string(),        app.current_parallel.to_string()),
+                                            ("flash-attn".to_string(),      if app.flash_attn { "on".to_string() } else { "off".to_string() }),
+                                            ("cache-type-k".to_string(),    cache_types[app.cache_k_idx].to_string()),
+                                            ("cache-type-v".to_string(),    cache_types[app.cache_v_idx].to_string()),
+                                            ("cont-batching".to_string(),   app.cont_batching.to_string()),
+                                            ("rope-freq-base".to_string(),  app.rope_base.to_string()),
+                                            ("rope-freq-scale".to_string(), format!("{}", app.rope_scale)),
+                                            ("defrag-thold".to_string(),    format!("{}", app.defrag_thold)),
+                                        ];
+                                        if app.mlock   { kv.push(("mlock".to_string(),   "true".to_string())); }
+                                        if app.no_mmap { kv.push(("no-mmap".to_string(), "true".to_string())); }
+
+                                        app.add_log(format!(">>> TUNER: writing {} keys to [{}] in router.ini...", kv.len(), section));
+                                        app.show_tuner = false;
+                                        let svc_name = app.service_name.clone();
+                                        let tx_t = tx.clone();
+                                        tokio::spawn(async move {
+                                            const ROUTER_INI: &str = "/home/laz/ai-models/llama.cpp/router.ini";
+                                            match tokio::fs::read_to_string(ROUTER_INI).await {
+                                                Ok(content) => match upsert_ini_section(&content, &section, &kv) {
+                                                    Some(updated) => {
+                                                        if tokio::fs::write(ROUTER_INI, updated).await.is_ok() {
+                                                            let _ = tx_t.send(Event::LogLine(format!(">>> TUNER: [{}] updated. Restarting router...", section))).await;
+                                                            let out = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc_name]).output().await;
+                                                            match out {
+                                                                Ok(o) if o.status.success() => { let _ = tx_t.send(Event::LogLine(">>> TUNER: router restarted. If it does not come back, a key may be unsupported - check: journalctl -u llama-router -e".to_string())).await; }
+                                                                _ => { let _ = tx_t.send(Event::LogLine(">>> TUNER ERROR: restart failed (sudoers for 'systemctl restart'? check journalctl).".to_string())).await; }
+                                                            }
+                                                        } else {
+                                                            let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot write {}", ROUTER_INI))).await;
+                                                        }
+                                                    }
+                                                    None => { let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: section [{}] not found in router.ini", section))).await; }
+                                                },
+                                                Err(_) => { let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot read {}", ROUTER_INI))).await; }
+                                            }
+                                        });
+                                    }
                                 }
+
                                 _ => {}
                             }
                         } else if app.console_focused {
@@ -544,56 +641,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, chosen_model);
                                                 app.console_cursor = app.console_input.chars().count();
                                                 
-                                                // 3. Generate INI Payload
-                                                let draft_model_val = if app.draft_model_idx > 0 && app.draft_model_idx <= app.available_models.len() {
-                                                    app.available_models[app.draft_model_idx - 1].clone()
-                                                } else {
-                                                    "".to_string()
-                                                };
-                                                let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
-                                                let env_content = format!(
-                                                    "MODEL={}\nNGL={}\nCTX_SIZE={}\nTHREADS={}\nN_BATCH={}\nPARALLEL={}\nFLASH_ATTN={}\nMLOCK={}\nNO_MMAP={}\nCACHE_K={}\nCACHE_V={}\nROPE_BASE={}\nROPE_SCALE={}\nDEFRAG_THOLD={}\nTHREADS_BATCH={}\nUBATCH_SIZE={}\nCONT_BATCHING={}\nCTX_SHIFT={}\nMETRICS={}\nAPI_KEY={}\nDRAFT_MODEL={}\n", 
-                                                    chosen_model, app.current_ngl, app.current_ctx, app.current_threads, app.current_batch, app.current_parallel,
-                                                    app.flash_attn, app.mlock, app.no_mmap, cache_types[app.cache_k_idx], cache_types[app.cache_v_idx],
-                                                    app.rope_base, app.rope_scale, app.defrag_thold, app.threads_batch, app.ubatch_size, app.cont_batching, app.ctx_shift, app.metrics, app.api_key, draft_model_val
-                                                    );
-                                                
-                                                // 4. Restart Daemon & Trigger VRAM Pre-Load
-                                                app.add_log(format!(">>> FAST-SWAP: Locked [{}]. Restarting Daemon...", chosen_model));
-                                                let svc_name = app.service_name.clone();
+                                                // Native-router hot-swap: warm-load the chosen model BY NAME.
+                                                // The router (--models-preset --models-max 1) autoloads it and
+                                                // evicts the incumbent. No router.env, no systemctl, no sudo.
+                                                app.add_log(format!(">>> HOT-SWAP: Requesting [{}] from router...", chosen_model));
                                                 let host_api = app.host.clone();
                                                 let port_api = app.port;
                                                 let warmup_model = chosen_model.clone();
-                                                let tx_warmup = tx.clone();
-                                                
                                                 let use_api_key = app.api_key;
+                                                let tx_warmup = tx.clone();
                                                 tokio::spawn(async move {
-                                                    // Overwrite configs and bounce the service
-                                                    let _ = tokio::fs::write("/home/laz/ai-models/llama.cpp/router.env", env_content).await;
-                                                    let _ = tokio::process::Command::new("sudo").arg("-n").arg("systemctl").arg("restart").arg(&svc_name).output().await;
-                                                    
-                                                    // Give systemd and llama-server 3 seconds to spin up the HTTP listener
-                                                    let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP: Daemon restarted. Sending VRAM Warm-Up Payload...".to_string())).await;
-                                                    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
-                                                    
-                                                    // Fire a dummy payload to force the router to load the model into VRAM immediately
                                                     let client = reqwest::Client::new();
                                                     let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
-                                                    
-                                                    // We request just 1 max_token so it loads the VRAM but doesn't waste CPU time generating a long response
                                                     let payload = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "warmup"}}], "max_tokens": 1}}"#, warmup_model);
-                                                    
-                                                    let mut req = client.post(&url).header("Content-Type", "application/json");
+                                                    let mut req = client.post(&url)
+                                                        .header("Content-Type", "application/json")
+                                                        .timeout(std::time::Duration::from_secs(120));
                                                     if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
-                                                        
-                                                    if let Ok(res) = req.body(payload).send().await {
-                                                        if res.status().is_success() {
-                                                            let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP: VRAM Warm-Up Successful. Model is locked and ready.".to_string())).await;
-                                                        } else {
-                                                            let _ = tx_warmup.send(Event::LogLine(format!(">>> FAST-SWAP ERROR: Warm-Up failed with status: {}", res.status()))).await;
+                                                    match req.body(payload).send().await {
+                                                        Ok(res) if res.status().is_success() => {
+                                                            let _ = tx_warmup.send(Event::ActiveModelSet(warmup_model.clone())).await;
+                                                            let _ = tx_warmup.send(Event::LogLine(format!(">>> HOT-SWAP: [{}] resident & warm.", warmup_model))).await;
                                                         }
-                                                    } else {
-                                                        let _ = tx_warmup.send(Event::LogLine(">>> FAST-SWAP ERROR: Daemon did not respond to Warm-Up payload.".to_string())).await;
+                                                        Ok(res) => { let _ = tx_warmup.send(Event::LogLine(format!(">>> HOT-SWAP ERROR: router returned {}", res.status()))).await; }
+                                                        Err(_) => { let _ = tx_warmup.send(Event::LogLine(">>> HOT-SWAP ERROR: router did not respond.".to_string())).await; }
                                                     }
                                                 });
                                             }
@@ -765,13 +836,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc]).output().await; });
                                 }
                                 KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    app.add_log(">>> TACTICAL KILL-SWITCH ENGAGED...".to_string());
-                                    tokio::spawn(async { let _ = tokio::process::Command::new("sudo").args(["-n", "killall", "-9", "llama-server"]).output().await; });
+                                    // Kill-switch must STOP the unit. With Restart=always a bare killall is
+                                    // respawned in ~2s and VRAM never frees; stopping the unit wins and stays down.
+                                    let svc = app.service_name.clone();
+                                    app.add_log(">>> TACTICAL KILL-SWITCH: stopping unit (frees VRAM, stays down)...".to_string());
+                                    let tx_k = tx.clone();
+                                    tokio::spawn(async move {
+                                        let out = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await;
+                                        match out {
+                                            Ok(o) if o.status.success() => { let _ = tx_k.send(Event::LogLine(">>> KILL-SWITCH: unit stopped, VRAM freed. (Shift+S to restart.)".to_string())).await; }
+                                            _ => { let _ = tx_k.send(Event::LogLine(">>> KILL-SWITCH ERROR: stop failed - sudoers must allow 'systemctl stop'; see journalctl.".to_string())).await; }
+                                        }
+                                    });
                                 }
                                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    // Crash Dump (Unchanged)
+                                    // Crash dump -> an ABSOLUTE path under $HOME, and report where it went (or
+                                    // if it failed) instead of writing to an unknown CWD and swallowing errors.
                                     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-                                    let filename = format!("crash_dump_{}.txt", timestamp);
+                                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                                    let path = format!("{}/saltnitor_crash_{}.txt", home, timestamp);
                                     let active_model = app.active_model.clone();
                                     let vram_used = app.vram_used;
                                     let vram_total = app.vram_total;
@@ -781,16 +864,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let gpu_power = app.gpu_power.clone();
                                     let cpu_load = app.cpu_history.last().copied().unwrap_or(0);
                                     let logs: Vec<String> = app.logs.iter().cloned().collect();
-
-                                    app.add_log(format!(">>> INITIATING CRASH DUMP -> {}", filename));
+                                    app.add_log(format!(">>> CRASH DUMP -> {}", path));
+                                    let tx_d = tx.clone();
                                     tokio::spawn(async move {
                                         use tokio::io::AsyncWriteExt;
                                         let mut content = String::new();
                                         content.push_str(&format!("--- SALTNITOR CRASH DUMP [{}] ---\n\nTARGET MODEL: {}\nVRAM USAGE:   {:.2} / {:.2} GB\nRAM USAGE:    {:.2} / {:.2} GB\nGPU TEMP:     {} C\nGPU POWER:    {}\nCPU LOAD:     {}%\n\n--- RECENT LOGS ---\n", timestamp, active_model, vram_used, vram_total, ram_used, ram_total, gpu_temp, gpu_power, cpu_load));
                                         for log in logs { content.push_str(&format!("{}\n", log)); }
-                                        if let Ok(mut file) = tokio::fs::File::create(&filename).await { let _ = file.write_all(content.as_bytes()).await; }
+                                        match tokio::fs::File::create(&path).await {
+                                            Ok(mut file) => {
+                                                if file.write_all(content.as_bytes()).await.is_ok() {
+                                                    let _ = tx_d.send(Event::LogLine(format!(">>> CRASH DUMP: saved to {}", path))).await;
+                                                } else {
+                                                    let _ = tx_d.send(Event::LogLine(format!(">>> CRASH DUMP ERROR: write failed -> {}", path))).await;
+                                                }
+                                            }
+                                            Err(e) => { let _ = tx_d.send(Event::LogLine(format!(">>> CRASH DUMP ERROR: cannot create {} ({})", path, e))).await; }
+                                        }
                                     });
                                 }
+
                                 _ => {}
                             }
                         }
@@ -872,6 +965,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Event::LogLine(line) => {
                         app.add_log(line);
+                    }
+                    Event::ActiveModelSet(m) => {
+                        app.active_model = m.clone();
+                        app.add_log(format!(">>> EXTERNAL: resident model is now {}", m));
                     }
                     Event::Tick => {}
                 }
