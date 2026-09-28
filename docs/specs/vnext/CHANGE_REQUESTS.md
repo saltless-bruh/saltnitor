@@ -15,3 +15,7 @@ Status: APPROVED (operator, 2026-09-28 — design D7)
 CR-4 · 2026-09-28 · affects: `docs/specs/vnext/tools/test_spec_lint.py` (spec tooling; no requirement) · found in: T0.1
 Problem: `test_ticked_task_needs_progress_entry` seeded its defect by ticking the hard-coded task `T0.1` in a copy of the live `tasks.md`. Ticking T0.1 for real (T0.1 Done-when) removed the fixture text, so the self-test failed on every run after the first completed task. · Proposal (applied by the agent, pending approval): seed on the first still-unticked task and pre-write DONE lines for tasks already ticked; the `spec_lint` check under test is unchanged and still has to fail for the seeded task and pass once its DONE line exists. · Impact: none on requirements; the self-test keeps working through P11.
 Status: OPEN (awaiting operator approval of the applied fix)
+
+CR-5 · 2026-09-28 · affects: BD register (REQ-MIG-006), REQ-ORC-001 · found in: T0.5
+Problem: two footprint-heuristic errors not in BD-01…32: `parse_params_b` reads `0.5B` as 5 B (`src/control_api.rs:435`), and `parse_bpw` sends `Q4_0`/`Q4_1` to the 5.0 default (`src/control_api.rs:443`). Details in `baseline/DEFECTS.md` → Observations. · Proposal: add them to requirements.md §5 as BD-33 and BD-34, fixed by the oracle v2 work (REQ-ORC-001, GGUF metadata instead of names). · Impact: register grows to 34; no P0 test pins either behavior.
+Status: OPEN

@@ -124,7 +124,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** make the repo a workspace (root package unchanged, plus `tools/fake-llama-server` with `publish = false`). The fake serves `/health`, `/v1/models`, `/models` (with `status.value` objects), `/models/load|unload`, `/v1/chat/completions` (stream and non-stream), `/metrics`, `/slots`. It runs from a scenario file (chunks and delays, status codes, malformed responses, hang before headers, crash after N chunks, OOM when an arg exceeds a threshold). It prints fixture `--help`/`--version` selected by env. It records argv, env, and requests to JSONL, and records client-disconnect times. Build it as lib + bin: the library runs HTTP scenarios in-process for fast tests; the binary covers process-level behavior (argv, env, `--help`, crashes). The crate README documents how tests locate the binary. Add a `record` mode (R0: read-only GETs of `/health`, `/models`, `/v1/models`, `/props`, `/slots`, `/metrics` from a live router, saved sanitized, with a liveness/shape-drift table) and `replay_from` scenarios that serve a capture byte-for-byte (CR-2).
   - **Done when:** `cargo test -p fake-llama-server` covers every scenario feature.
 
-- [ ] **T0.5 — Characterization: pure helpers** `[P]`
+- [x] **T0.5 — Characterization: pure helpers** `[P]`
   - **Reqs:** REQ-MIG-002
   - **Depends:** T0.1
   - **Files:** `#[cfg(test)]` modules in `src/main.rs`, `src/control_api.rs` (additions only)

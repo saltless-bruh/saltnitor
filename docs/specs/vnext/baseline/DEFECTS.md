@@ -195,3 +195,10 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Status:** confirmed — the live router reports `status` as an object (`{"value": "unloaded", "args": […], "preset": "…", "failed": true, "exit_code": 10}`), so `m["status"].as_str()` is always `None`; none of the three checks can match and the resident fast path never fires.
 - **Observation (live system, 2026-09-28, not a Saltnitor defect):** all 5 router models were `unloaded` with `"failed": true, "exit_code": 10` at capture time — the router's last load attempt failed for every model. Reported to the operator.
 - **Fixed by:**
+
+## Observations (not in the BD register)
+
+Found while writing the T0.5 characterization tests. Not pinned by any test; proposed as BD-33/BD-34 in CR-5 (operator decides).
+
+- **`parse_params_b` misreads decimal sizes** — `src/control_api.rs:435` replaces `.` with a space before splitting, so `Qwen2.5-0.5B-Instruct.gguf` yields `Some(5.0)` (the `5B` of `0.5B`), a 10× over-estimate.
+- **`parse_bpw` has no `Q4_0`/`Q4_1` case** — `src/control_api.rs:443`: `m-Q4_0.gguf` matches none of the arms and falls through to the 5.0 default (~4.5 bpw actual).

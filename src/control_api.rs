@@ -464,3 +464,118 @@ fn meminfo_kb(key: &str) -> Option<f64> {
         .lines().find(|l| l.starts_with(key))?
         .split_whitespace().nth(1)?.parse::<f64>().ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn meta(model: &str, offload: bool, v: Option<f64>, r: Option<f64>) -> ProfileMeta {
+        ProfileMeta {
+            model: model.into(),
+            offload,
+            est_vram_gb: v,
+            est_ram_gb: r,
+        }
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn parse_params_b_reads_the_first_size_token() {
+        for (name, want) in [
+            ("Qwen3-30B-A3B-Q4_K_M.gguf", Some(30.0)),
+            ("llama-2-7b-chat.Q8_0.gguf", Some(7.0)),
+            ("gemma-3-270M.gguf", None),
+            ("mistral.gguf", None),
+            ("model-9000B.gguf", None),
+        ] {
+            assert_eq!(parse_params_b(name), want, "{name}");
+        }
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn parse_bpw_maps_quant_names() {
+        for (name, want) in [
+            ("m-Q2_K.gguf", 2.6),
+            ("m-Q3_K_M.gguf", 3.5),
+            ("m-IQ3_XXS.gguf", 3.5),
+            ("m-IQ4_XS.gguf", 4.3),
+            ("m-Q4_K_M.gguf", 4.85),
+            ("m-IQ4_NL.gguf", 4.85),
+            ("m-Q5_K_M.gguf", 5.5),
+            ("m-Q5_0.gguf", 5.5),
+            ("m-Q6_K.gguf", 6.6),
+            ("m-Q8_0.gguf", 8.5),
+            ("m-F16.gguf", 16.0),
+            ("m-BF16.gguf", 16.0),
+            ("m.gguf", 5.0),
+        ] {
+            assert_eq!(parse_bpw(name), want, "{name}");
+        }
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn estimate_footprint_overrides_and_heuristics() {
+        assert_eq!(
+            estimate_footprint(&meta("x-30B-Q4_K_M.gguf", true, Some(3.0), Some(4.0))),
+            (3.0, 4.0)
+        );
+        assert_eq!(
+            estimate_footprint(&meta("llama-7b-Q8_0.gguf", false, None, None)),
+            (8.9, 0.0)
+        );
+        assert_eq!(
+            estimate_footprint(&meta("Qwen3-30B-A3B-Q4_K_M.gguf", true, None, None)),
+            (4.7, 15.5)
+        );
+        assert_eq!(
+            estimate_footprint(&meta("Qwen3-30B-A3B-Q4_K_M.gguf", true, Some(3.0), None)),
+            (5.7, 15.5)
+        );
+        assert_eq!(
+            estimate_footprint(&meta("mystery.gguf", false, None, None)),
+            (6.5, 0.0)
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn stage_from_outcome_builds_the_terminal_frame() {
+        let v = |o| serde_json::to_value(Stage::from_outcome(o)).unwrap();
+        assert_eq!(
+            v(EnsureOutcome::Loaded {
+                model: "A".into(),
+                endpoint: "http://x/v1".into(),
+                load_ms: 1234,
+                vram_estimate_gb: Some(4.7)
+            }),
+            json!({"stage": "done", "status": "loaded", "model": "A", "endpoint": "http://x/v1", "load_ms": 1234, "vram_estimate_gb": 4.7})
+        );
+        assert_eq!(
+            v(EnsureOutcome::AlreadyResident {
+                model: "A".into(),
+                endpoint: "http://x/v1".into()
+            }),
+            json!({"stage": "done", "status": "already_resident", "model": "A", "endpoint": "http://x/v1", "load_ms": null, "vram_estimate_gb": null})
+        );
+        assert_eq!(
+            v(EnsureOutcome::Oom(OomInfo {
+                need_vram_gb: 1.0,
+                total_vram_gb: 2.0,
+                need_ram_gb: 3.0,
+                total_ram_gb: 4.0
+            })),
+            json!({"stage": "oom", "detail": "need ~1.0GB VRAM (have 2.0) / ~3.0GB RAM (have 4.0); pass force=true"})
+        );
+        assert_eq!(
+            v(EnsureOutcome::Bad("x".into())),
+            json!({"stage": "error", "detail": "x"})
+        );
+        assert_eq!(
+            v(EnsureOutcome::Err("y".into())),
+            json!({"stage": "error", "detail": "y"})
+        );
+    }
+}
