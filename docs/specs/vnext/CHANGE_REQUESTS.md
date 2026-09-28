@@ -11,3 +11,7 @@ Status: APPROVED (operator, 2026-09-28 — design D6)
 CR-3 · 2026-09-28 · affects: T0.10, REQ-TST-012/AC1 (means, not wording) · found in: Phase 0 design
 Problem: required code-owner reviews on `vnext` block the agent's per-task pushes (design D4), and the operator is the only code owner. · Proposal: full protection (code-owner review) on `master`; `vnext` protected against force-push and deletion only. Protected-path changes on `vnext` go in commits with a `Protected-change:` trailer; `scripts/gate.sh` lists every protected-path change since the previous gate and the operator approves the list in `evidence/G<n>.md`; CODEOWNERS review applies to the `vnext → master` PR. · Impact: T0.10 text.
 Status: APPROVED (operator, 2026-09-28 — design D7)
+
+CR-4 · 2026-09-28 · affects: `docs/specs/vnext/tools/test_spec_lint.py` (spec tooling; no requirement) · found in: T0.1
+Problem: `test_ticked_task_needs_progress_entry` seeded its defect by ticking the hard-coded task `T0.1` in a copy of the live `tasks.md`. Ticking T0.1 for real (T0.1 Done-when) removed the fixture text, so the self-test failed on every run after the first completed task. · Proposal (applied by the agent, pending approval): seed on the first still-unticked task and pre-write DONE lines for tasks already ticked; the `spec_lint` check under test is unchanged and still has to fail for the seeded task and pass once its DONE line exists. · Impact: none on requirements; the self-test keeps working through P11.
+Status: OPEN (awaiting operator approval of the applied fix)

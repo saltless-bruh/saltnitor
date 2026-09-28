@@ -136,10 +136,18 @@ class SpecLintTest(unittest.TestCase):
         self.assert_fails_with("REQ-ZZZ-001: no source")
 
     def test_ticked_task_needs_progress_entry(self):
-        self.edit(self.tasks, "- [ ] **T0.1 —", "- [x] **T0.1 —")
-        write(self.progress, "2026-10-01 T0.2 started\n")
-        self.assert_fails_with("T0.1: ticked [x] but no 'DONE' line")
-        write(self.progress, "2026-10-01 T0.1 DONE abc1234\n")
+        # Seed on the first task still unticked in the live pack, so the test keeps working as
+        # real tasks get ticked (CR-4); tasks already ticked get their DONE lines up front.
+        text = read(self.tasks)
+        m = re.search(r"^- \[ \] \*\*(T\d+\.\d+) —", text, re.M)
+        self.assertIsNotNone(m, "no unticked task left to seed")
+        tid = m.group(1)
+        done = "".join(f"2026-10-01 {t} DONE abc1234\n"
+                       for t in re.findall(r"^- \[x\] \*\*(T\d+\.\d+) —", text, re.M))
+        self.edit(self.tasks, f"- [ ] **{tid} —", f"- [x] **{tid} —")
+        write(self.progress, done + f"2026-10-01 {tid} started\n")
+        self.assert_fails_with(f"{tid}: ticked [x] but no 'DONE' line")
+        write(self.progress, done + f"2026-10-01 {tid} DONE abc1234\n")
         code, out = self.run_lint()
         self.assertEqual(code, 0, out)
 
