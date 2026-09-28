@@ -138,7 +138,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** characterize `/healthz`, `/v1/models`, `/v1/status`, `/v1/ensure` (already_resident, loaded, unknown profile, oracle reject), `/v1/ensure/stream` (stage order), and non-stream chat against the fake runtime. Record BD-02 buffering as timing evidence in `DEFECTS.md` — do not assert it.
   - **Done when:** the tests pass on baseline code; BD-02 has timing evidence.
 
-- [ ] **T0.7 — TUI visual baseline** `[P]`
+- [x] **T0.7 — TUI visual baseline** `[P]`
   - **Reqs:** REQ-MIG-005, REQ-TUI-009, REQ-MIG-007/AC3, REQ-MIG-007/AC4
   - **Depends:** T0.1
   - **Files:** test module in `src/ui.rs`, `src/snapshots/*` (insta)

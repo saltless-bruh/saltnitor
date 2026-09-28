@@ -449,3 +449,115 @@ fn estimate_vram(model: &str, ctx: i32) -> Option<f64> {
     let ctx_vram = (ctx as f64 / 1024.0) * 0.125; // Base context overhead
     Some(file_vram + ctx_vram)
 }
+#[cfg(test)]
+mod tests {
+    use super::draw;
+    use crate::app::App;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    /// Fixed data; every host-dependent field is overwritten (history is read from the CWD in App::new).
+    fn fixture() -> App {
+        let mut app = App::new(
+            "Fixture CPU 8-Core".into(),
+            16,
+            32.0,
+            "Fixture GPU 12GB".into(),
+            12.0,
+            true,
+            "127.0.0.1".into(),
+            8080,
+            "llama-router".into(),
+            33,
+            8192,
+        );
+        app.console_history = Vec::new();
+        app.history_index = 0;
+        app.vram_used = 6.5;
+        app.ram_used = 12.25;
+        app.cpu_history = (0..100).map(|i| (i * 7 % 100) as u64).collect();
+        app.cpu_cores = (0..16).map(|i| (i * 6) as f32).collect();
+        app.gpu_temp = 55;
+        app.gpu_power = "120W".into();
+        app.gpu_util = "40%".into();
+        app.vram_util = "54%".into();
+        app.gpu_fan = "30%".into();
+        app.gpu_clocks = "1800 MHz".into();
+        app.gpu_processes = vec![("llama-server".into(), 6.1)];
+        app.sys_processes = vec![("llama-server".into(), 9.5), ("saltnitor".into(), 0.1)];
+        app.swap_used = 0.5;
+        app.swap_total = 8.0;
+        app.sys_uptime = 3661;
+        app.port_status = "Port 8080: LISTENING".into();
+        app.available_models = vec!["A_STD".into(), "A_FOCUS".into(), "B".into()];
+        app.active_model = "A_STD".into();
+        app.hot_swap_state.select(Some(0));
+        for line in ["router started", "model A_STD loaded", "request served"] {
+            app.add_log(line.to_string());
+        }
+        app
+    }
+
+    fn render(app: &mut App, w: u16, h: u16) -> String {
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+        t.draw(|f| draw(f, app)).unwrap();
+        // Debug form = text lines + style runs (fg/bg/modifier), so color-only meaning is pinned too;
+        // the Display form would capture text only.
+        format!("{:?}", t.backend().buffer())
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3
+    #[test]
+    fn dashboard_with_interrogator_deck() {
+        insta::assert_snapshot!("dashboard", render(&mut fixture(), 100, 30));
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3
+    #[test]
+    fn hot_swap_deck() {
+        let mut app = fixture();
+        app.bottom_tab_mode = 1;
+        insta::assert_snapshot!("deck_hot_swap", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3
+    #[test]
+    fn tuner_pages() {
+        for page in 0..3 {
+            let mut app = fixture();
+            app.show_tuner = true;
+            app.tuner_page = page;
+            let name = format!("tuner_page_{}", page + 1);
+            insta::assert_snapshot!(name.as_str(), render(&mut app, 100, 30));
+        }
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3
+    #[test]
+    fn gpu_and_cpu_inspectors() {
+        let mut app = fixture();
+        app.show_gpu_inspector = true;
+        insta::assert_snapshot!("gpu_inspector", render(&mut app, 100, 30));
+        let mut app = fixture();
+        app.show_sys_inspector = true;
+        insta::assert_snapshot!("cpu_inspector", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3
+    #[test]
+    fn help_and_search() {
+        let mut app = fixture();
+        app.show_help = true;
+        insta::assert_snapshot!("help", render(&mut app, 100, 30));
+        let mut app = fixture();
+        app.is_searching = true;
+        app.search_query = "loaded".into();
+        insta::assert_snapshot!("search", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC4
+    #[test]
+    fn too_small_terminal_is_refused() {
+        insta::assert_snapshot!("too_small_79x16", render(&mut fixture(), 79, 16));
+        insta::assert_snapshot!("too_small_80x15", render(&mut fixture(), 80, 15));
+    }
+}

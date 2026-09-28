@@ -25,3 +25,4 @@ members = ["tools/fake-llama-server"]
 
 [dev-dependencies]
 fake-llama-server = { path = "tools/fake-llama-server" }
+insta = "1.48.0"
