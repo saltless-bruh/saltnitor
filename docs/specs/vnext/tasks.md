@@ -145,7 +145,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** use ratatui `TestBackend` with a fixed `App` fixture. Snapshot the dashboard, both bottom-deck modes, tuner pages 1–3, GPU/CPU inspectors, help, and search, plus the too-small refusal at 79×16 and 80×15.
   - **Done when:** the snapshots are committed and pass.
 
-- [ ] **T0.8 — Known-good router fixture** `[HUMAN]`
+- [x] **T0.8 — Known-good router fixture** `[HUMAN]`
   - **Reqs:** REQ-MIG-004
   - **Depends:** T0.1
   - **Files:** `tests/fixtures/router/{known-good.ini,readme-example.ini}`

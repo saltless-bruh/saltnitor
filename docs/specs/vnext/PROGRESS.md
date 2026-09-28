@@ -9,3 +9,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-09-28 · T0.5 · fb14adf · DONE · 9 characterization tests (upsert, footprint, params/bpw, stage frames); mutation-checked; 2 parser observations → CR-5
 2026-09-28 · T0.6 · c49bdd0 · DONE · 17 route tests on the real serve() vs fake; mutation-checked; BD-02 timing (1208 ms vs 201 ms first byte) and BD-32 probe recorded
 2026-09-28 · T0.7 · 091e912 · DONE · 11 insta snapshots (text + styles), mutation-checked (title text and refusal color); snapshot approval = operator review of this commit (REQ-TUI-009/AC1)
+2026-09-28 · T0.8 · 90810b5 · DONE · known-good.ini = read-only sanitized copy of the live router.ini (design D2 replaces the [HUMAN] hand-over; operator approves via this diff); readme-example.ini from README
