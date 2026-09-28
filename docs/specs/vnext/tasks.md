@@ -152,7 +152,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** the operator supplies the working `router.ini`; the agent sanitizes the paths and adds it plus the README example.
   - **Done when:** both fixtures exist and `grep -n "/home/" tests/fixtures/router/*` shows only placeholders.
 
-- [ ] **T0.9 — Spec lint installed**
+- [x] **T0.9 — Spec lint installed**
   - **Reqs:** REQ-DOC-006/AC1, REQ-TST-016
   - **Depends:** T0.1
   - **Files:** `docs/specs/vnext/tools/spec_lint.py`, `docs/specs/vnext/tools/test_spec_lint.py` (both shipped with the spec pack)
