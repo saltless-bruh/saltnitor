@@ -110,13 +110,12 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** list CLI flags (`Cli`), config keys and defaults (`TomlConfig`, `ProfileMeta`), every keybinding, every route (method, auth, status codes, body shape), files read/written, and external commands — each with a `file:line` citation.
   - **Done when:** every route in `control_api::serve` and every `KeyCode` arm in `main.rs` is listed with a citation.
 
-- [ ] **T0.3 — Defect register** `[P]`
+- [x] **T0.3 — Defect register** `[P]`
   - **Reqs:** REQ-MIG-006
   - **Depends:** T0.1
   - **Files:** `docs/specs/vnext/baseline/DEFECTS.md`
   - **Do:** re-verify BD-01…BD-32 at `c89f278`: confirm the evidence lines, add a one-line reproduction, leave `Fixed by:` empty. BD-32 needs a `/models` sample from the operator's real router `[HUMAN]` (or the upstream docs); mark it confirmed or disputed.
   - **Done when:** 32 entries are each confirmed or disputed with a reason.
-  - [!] BLOCKED: T0.3 — BD-32 needs a real /v1/models sample. Options: R0 capture after T0.4 (planned). Need: nothing — resolves after T0.4.
 
 - [x] **T0.4 — Fake runtime tool** · *test infrastructure*
   - **Reqs:** REQ-TST-011, REQ-TST-006

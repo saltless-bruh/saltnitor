@@ -190,7 +190,8 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Fixed by:**
 
 ### BD-32 — Resident fast path may never fire with status objects
-- **Evidence (c89f278):** `src/control_api.rs:101` — checks `loaded` (bool), `state == "loaded"`, `status == "loaded"` (string) only
+- **Evidence (c89f278):** `src/control_api.rs:101` — checks `loaded` (bool), `state == "loaded"`, `status == "loaded"` (string) only; live sample `tests/fixtures/captures/baseline/r0/v1_models.json` (captured 2026-09-28)
 - **Repro:** `fake-llama-server record --upstream http://127.0.0.1:8080 --out tests/fixtures/captures/baseline/r0`, then inspect `v1_models.json` for the shape of `status`.
-- **Status:** BLOCKED — needs a real `/v1/models` sample; captured by R0 after T0.4 (plan Task 8).
+- **Status:** confirmed — the live router reports `status` as an object (`{"value": "unloaded", "args": […], "preset": "…", "failed": true, "exit_code": 10}`), so `m["status"].as_str()` is always `None`; none of the three checks can match and the resident fast path never fires.
+- **Observation (live system, 2026-09-28, not a Saltnitor defect):** all 5 router models were `unloaded` with `"failed": true, "exit_code": 10` at capture time — the router's last load attempt failed for every model. Reported to the operator.
 - **Fixed by:**

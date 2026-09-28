@@ -1,0 +1,13 @@
+{
+  "build_info": "b9105-8cef8201a",
+  "default_generation_settings": {
+    "n_ctx": 0,
+    "params": null
+  },
+  "max_instances": 1,
+  "model_alias": "llama-server",
+  "model_path": "none",
+  "models_autoload": true,
+  "role": "router",
+  "webui_settings": {}
+}
