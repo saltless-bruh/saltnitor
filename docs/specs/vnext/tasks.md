@@ -103,7 +103,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** create `vnext` from `master`; `git mv` both spec files and the rest of `specs/` into `docs/specs/vnext/`. Move both source documents into `docs/specs/vnext/sources/`: `specs/SALTNITOR_VNEXT_BLUEPRINT.md` and `docs/proposal/Technical Proposal — Saltnitor Qwen MoE Runtime, Tuning Laboratory, and Remote Agent Server.md`. Add empty PROGRESS and CHANGE_REQUESTS logs. Update every `specs/…` and `docs/proposal/…` path in the root `CLAUDE.md` to the new locations, and confirm it still meets REQ-DOC-005 (no `AGENTS.md`; r2.1) *(operator decisions, 2026-09-28)*. Add `vnext` to the `push`/`pull_request` branches of `rust.yml` (CR-1).
   - **Done when:** `git branch --show-current` prints `vnext`; `wc -l CLAUDE.md` ≤ 220; CLAUDE.md links (does not copy) the spec files; `AGENTS.md` does not exist; `specs/` and `docs/proposal/` no longer exist; `grep -nE "specs/(requirements|tasks|spec_lint|SALTNITOR)|docs/proposal" CLAUDE.md` finds only `docs/specs/vnext/` paths.
 
-- [ ] **T0.2 — Behavior inventory** `[P]`
+- [x] **T0.2 — Behavior inventory** `[P]`
   - **Reqs:** REQ-MIG-001
   - **Depends:** T0.1
   - **Files:** `docs/specs/vnext/baseline/BEHAVIOR.md`
