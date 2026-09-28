@@ -1,0 +1,11 @@
+src/app.rs: warning: this function has too many arguments (11/7)
+src/control_api.rs: warning: this `if` statement can be collapsed
+src/events.rs: warning: large size difference between variants: the entire enum is at least 256 bytes
+src/main.rs: warning: called `Iterator::last` on a `DoubleEndedIterator`; this will needlessly iterate the entire iterator
+src/main.rs: warning: consider using `sort_by_key`
+src/main.rs: warning: stripping a prefix manually
+src/main.rs: warning: the loop variable `i` is used to index `lines`
+src/main.rs: warning: this `if` can be collapsed into the outer `match`
+src/main.rs: warning: this `if` statement can be collapsed
+src/ui.rs: warning: the loop variable `i` is used to index `labels`
+src/ui.rs: warning: this `if` statement can be collapsed
