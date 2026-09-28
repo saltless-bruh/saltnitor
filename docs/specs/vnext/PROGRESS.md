@@ -12,3 +12,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-09-28 · T0.8 · 90810b5 · DONE · known-good.ini = read-only sanitized copy of the live router.ini (design D2 replaces the [HUMAN] hand-over; operator approves via this diff); readme-example.ini from README
 2026-09-28 · T0.9 · 0c8ce4b · DONE · --sync is a fixed point; --tests --phase P0 exit 0 (all 10 due P0 T-ACs tagged); self-test 25/25
 2026-09-28 · T0.10 · ed6420b · BLOCKED · files added; scripts/gate.sh G0 → all automated rows PASS; [HUMAN] branch protection pending (master: code-owner review; vnext: no force-push/deletion — CR-3)
+2026-09-28 · T0.11 · c94c126 · DONE · 6 suites, all non-zero: saltnitor 34, fake lib 6, fake bin 1, http 19, process 7, record 6

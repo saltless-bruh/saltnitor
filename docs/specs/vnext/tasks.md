@@ -167,7 +167,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Done when:** `scripts/gate.sh G0` runs; the operator confirms branch protection in `evidence/G0.md`.
   - [!] BLOCKED: T0.10 — branch protection must be enabled by the operator (CR-3). Options: GitHub UI or the `gh api` commands in the Phase 0 plan, Task 14 Step 7. Need: operator enables it and confirms in `evidence/G0.md`.
 
-- [ ] **T0.11 — Test baseline record**
+- [x] **T0.11 — Test baseline record**
   - **Reqs:** REQ-CI-005/AC2
   - **Depends:** T0.5, T0.6, T0.7
   - **Files:** `docs/specs/vnext/evidence/test-baseline.txt`
