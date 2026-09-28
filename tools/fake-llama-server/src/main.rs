@@ -39,19 +39,18 @@ async fn main() {
         .collect();
     recorder.record("env", json!({ "env": env }));
 
-    if let Some(rule) = &scenario.oom {
-        if let Some(v) = arg_value(&args, &rule.arg).and_then(|v| v.parse::<u64>().ok()) {
-            if v > rule.gt {
-                recorder.record("oom", json!({ "arg": rule.arg, "value": v }));
-                eprintln!(
-                    "ggml_backend_cuda_buffer_type_alloc_buffer: allocating {v} MiB on device 0: cudaMalloc failed: out of memory"
-                );
-                eprintln!(
-                    "llama_init_from_model: failed to initialize the context: failed to allocate buffer"
-                );
-                std::process::exit(1);
-            }
-        }
+    if let Some(rule) = &scenario.oom
+        && let Some(v) = arg_value(&args, &rule.arg).and_then(|v| v.parse::<u64>().ok())
+        && v > rule.gt
+    {
+        recorder.record("oom", json!({ "arg": rule.arg, "value": v }));
+        eprintln!(
+            "ggml_backend_cuda_buffer_type_alloc_buffer: allocating {v} MiB on device 0: cudaMalloc failed: out of memory"
+        );
+        eprintln!(
+            "llama_init_from_model: failed to initialize the context: failed to allocate buffer"
+        );
+        std::process::exit(1);
     }
 
     let host = arg_value(&args, "--host").unwrap_or_else(|| "127.0.0.1".into());
