@@ -1,0 +1,15 @@
+[package]
+name = "fake-llama-server"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Scenario-driven stand-in for llama-server, for Saltnitor tests only (REQ-TST-011)"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-stream = "0.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+toml = "1.1.2"
+reqwest = { version = "0.13.3", features = ["json"] }
