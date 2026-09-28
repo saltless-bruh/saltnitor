@@ -116,6 +116,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `docs/specs/vnext/baseline/DEFECTS.md`
   - **Do:** re-verify BD-01…BD-32 at `c89f278`: confirm the evidence lines, add a one-line reproduction, leave `Fixed by:` empty. BD-32 needs a `/models` sample from the operator's real router `[HUMAN]` (or the upstream docs); mark it confirmed or disputed.
   - **Done when:** 32 entries are each confirmed or disputed with a reason.
+  - [!] BLOCKED: T0.3 — BD-32 needs a real /v1/models sample. Options: R0 capture after T0.4 (planned). Need: nothing — resolves after T0.4.
 
 - [ ] **T0.4 — Fake runtime tool** · *test infrastructure*
   - **Reqs:** REQ-TST-011, REQ-TST-006
