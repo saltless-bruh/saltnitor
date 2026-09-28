@@ -6,3 +6,9 @@ use std::path::Path;
 pub fn replay_file(_dir: &Path, _path: &str) -> Option<(u16, String, Vec<u8>)> {
     None
 }
+
+/// `fake-llama-server record …` entry point; returns the process exit code.
+pub async fn cli(args: &[String]) -> i32 {
+    eprintln!("record: capture is added in the next commit (args: {args:?})");
+    2
+}

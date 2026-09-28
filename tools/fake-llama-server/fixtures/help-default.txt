@@ -1,0 +1,10 @@
+usage: fake-llama-server [options]
+
+A scenario-driven stand-in for llama-server (tests only).
+
+  -h,    --help        print this help and exit
+  --version            print version and exit
+  --host HOST          bind address (default: 127.0.0.1)
+  --port PORT          bind port (default: 8080; 0 = any free port)
+
+Environment: FAKE_SCENARIO, FAKE_RECORD, FAKE_HELP_FIXTURE, FAKE_VERSION_FIXTURE
