@@ -1,0 +1,12 @@
+# BD-02 evidence probe: five SSE chunks, 200 ms apart, model A resident.
+models_shape = "legacy"
+max_loaded = 1
+
+[[models]]
+id = "A"
+loaded = true
+
+[routes."POST /v1/chat/completions"]
+kind = "chunks"
+items = ["t1", "t2", "t3", "t4", "t5"]
+delay_ms = 200

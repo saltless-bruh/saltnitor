@@ -131,7 +131,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** table-driven tests for `upsert_ini_section` (replace, append, comments kept, other sections untouched, missing section → `None`), `estimate_footprint`, `parse_params_b`, `parse_bpw`, and `Stage::from_outcome`.
   - **Done when:** the tests pass on unmodified code; `git diff c89f278 -- src` shows only test-module additions.
 
-- [ ] **T0.6 — Characterization: control API**
+- [x] **T0.6 — Characterization: control API**
   - **Reqs:** REQ-MIG-002, REQ-TST-002, REQ-MIG-007/AC1, REQ-MIG-007/AC2
   - **Depends:** T0.4, T0.5
   - **Files:** `#[cfg(test)]` in `src/control_api.rs`, `tests/fixtures/scenarios/*.toml`

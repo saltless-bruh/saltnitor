@@ -13,6 +13,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/control_api.rs:388` — `match resp.bytes().await {`
 - **Repro:** `cargo test bd02_first_byte_timing -- --ignored --nocapture` (added in T0.6) prints first-byte times direct vs through Saltnitor.
 - **Status:** confirmed — the full body is awaited before the response is built; timing evidence appended by T0.6.
+- **Timing (2026-09-28, fake runtime, 5 SSE chunks 200 ms apart, two runs identical):** direct first byte 201 ms / total 1207 ms; through Saltnitor first byte 1208 ms / total 1208 ms — the client receives nothing until the stream has ended.
 - **Fixed by:**
 
 ### BD-03 — Auth is only checked on the ensure routes
@@ -193,6 +194,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/control_api.rs:101` — checks `loaded` (bool), `state == "loaded"`, `status == "loaded"` (string) only; live sample `tests/fixtures/captures/baseline/r0/v1_models.json` (captured 2026-09-28)
 - **Repro:** `fake-llama-server record --upstream http://127.0.0.1:8080 --out tests/fixtures/captures/baseline/r0`, then inspect `v1_models.json` for the shape of `status`.
 - **Status:** confirmed — the live router reports `status` as an object (`{"value": "unloaded", "args": […], "preset": "…", "failed": true, "exit_code": 10}`), so `m["status"].as_str()` is always `None`; none of the three checks can match and the resident fast path never fires.
+- **Probe (T0.6, `bd32_status_object_not_recognised`):** fake router reports A loaded in status-object form; Saltnitor `/v1/status` → `resident_models = []`.
 - **Observation (live system, 2026-09-28, not a Saltnitor defect):** all 5 router models were `unloaded` with `"failed": true, "exit_code": 10` at capture time — the router's last load attempt failed for every model. Reported to the operator.
 - **Fixed by:**
 
