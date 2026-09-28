@@ -176,3 +176,240 @@ async fn recorder_strips_authorization() {
             .contains("sk-secret")
     );
 }
+
+use fake_llama_server::Fault;
+use std::time::{Duration, Instant};
+
+fn chat_url(f: &fake_llama_server::Handle) -> String {
+    format!("{}/v1/chat/completions", f.base_url())
+}
+
+async fn read_all(resp: &mut reqwest::Response) -> (String, Option<reqwest::Error>) {
+    let mut text = String::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(c)) => text.push_str(&String::from_utf8_lossy(&c)),
+            Ok(None) => return (text, None),
+            Err(e) => return (text, Some(e)),
+        }
+    }
+}
+
+fn deltas(sse: &str) -> String {
+    sse.lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter(|d| *d != "[DONE]")
+        .map(|d| {
+            serde_json::from_str::<Value>(d).unwrap()["choices"][0]["delta"]["content"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn chat_non_stream_autoloads_and_evicts() {
+    let f = spawn(ab().with_max_loaded(1)).await;
+    let (s, v) = post(
+        chat_url(&f),
+        json!({"model": "B", "messages": [{"role": "user", "content": "hi"}]}),
+    )
+    .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["object"], "chat.completion");
+    assert_eq!(v["model"], "B");
+    assert_eq!(v["choices"][0]["message"]["content"], "Hello from fake");
+    assert_eq!(f.loaded(), vec!["B"]);
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn chat_rejects_missing_or_unknown_model() {
+    let f = spawn(ab()).await;
+    assert_eq!(post(chat_url(&f), json!({"messages": []})).await.0, 400);
+    let (s, v) = post(chat_url(&f), json!({"model": "Z", "messages": []})).await;
+    assert_eq!(s, 400);
+    assert_eq!(v["error"]["message"], "model 'Z' not found");
+    assert_eq!(f.loaded(), vec!["A"]);
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn chat_stream_sends_sse_chunks_then_done() {
+    let f = spawn(ab()).await;
+    let mut r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "stream": true, "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers()["content-type"], "text/event-stream");
+    let (text, err) = read_all(&mut r).await;
+    assert!(err.is_none());
+    assert_eq!(text.matches("chat.completion.chunk").count(), 3);
+    assert_eq!(deltas(&text), "Hello from fake");
+    assert!(text.ends_with("data: [DONE]\n\n"), "{text}");
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn chunks_fault_streams_with_scripted_timing() {
+    let f = spawn(ab().with_fault(
+        "POST /v1/chat/completions",
+        Fault::Chunks {
+            items: vec!["a".into(), "b".into(), "c".into()],
+            delay_ms: 150,
+        },
+    ))
+    .await;
+    let t0 = Instant::now();
+    let mut r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "stream": true, "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    let mut first = None;
+    let mut text = String::new();
+    while let Some(c) = r.chunk().await.unwrap() {
+        first.get_or_insert(t0.elapsed());
+        text.push_str(&String::from_utf8_lossy(&c));
+    }
+    let (first, total) = (first.unwrap(), t0.elapsed());
+    assert_eq!(deltas(&text), "abc");
+    assert!(first >= Duration::from_millis(140), "first={first:?}");
+    assert!(total >= Duration::from_millis(430), "total={total:?}");
+    assert!(
+        total - first >= Duration::from_millis(250),
+        "streamed, not buffered: first={first:?} total={total:?}"
+    );
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn chunks_fault_on_non_stream_chat_waits_then_answers() {
+    let f = spawn(ab().with_fault(
+        "POST /v1/chat/completions",
+        Fault::Chunks {
+            items: vec!["x".into(), "y".into()],
+            delay_ms: 100,
+        },
+    ))
+    .await;
+    let t0 = Instant::now();
+    let (s, v) = post(chat_url(&f), json!({"model": "A", "messages": []})).await;
+    assert_eq!(
+        (s, v["choices"][0]["message"]["content"].as_str()),
+        (200, Some("xy"))
+    );
+    assert!(t0.elapsed() >= Duration::from_millis(190));
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn status_fault_overrides_a_route() {
+    let f = spawn(ab().with_fault(
+        "GET /health",
+        Fault::Status {
+            code: 503,
+            body: r#"{"error":"busy"}"#.into(),
+        },
+    ))
+    .await;
+    let r = reqwest::get(format!("{}/health", f.base_url()))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 503);
+    assert_eq!(r.headers()["content-type"], "application/json");
+    assert_eq!(r.text().await.unwrap(), r#"{"error":"busy"}"#);
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn hang_before_headers_times_the_client_out() {
+    let f = spawn(ab().with_fault("GET /health", Fault::HangBeforeHeaders)).await;
+    let err = reqwest::Client::new()
+        .get(format!("{}/health", f.base_url()))
+        .timeout(Duration::from_millis(300))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(err.is_timeout(), "{err}");
+    assert_eq!(
+        f.recorder.of_kind("request").last().unwrap()["path"],
+        "/health"
+    );
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn crash_after_drops_the_connection_mid_stream() {
+    let f =
+        spawn(ab().with_fault("POST /v1/chat/completions", Fault::CrashAfter { chunks: 1 })).await;
+    let mut r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "stream": true, "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    let (text, err) = read_all(&mut r).await;
+    assert!(
+        err.is_some(),
+        "stream must end in an error, got clean end: {text}"
+    );
+    assert_eq!(text.matches("chat.completion.chunk").count(), 1, "{text}");
+    assert!(!text.contains("[DONE]"));
+    assert_eq!(f.recorder.of_kind("crash").len(), 1);
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn malformed_fault_breaks_json_and_sse() {
+    let f = spawn(ab().with_fault("POST /v1/chat/completions", Fault::Malformed)).await;
+    let r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert!(serde_json::from_str::<Value>(&r.text().await.unwrap()).is_err());
+    let r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "stream": true, "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    let text = r.text().await.unwrap();
+    let data = text.strip_prefix("data: ").unwrap().trim_end();
+    assert!(serde_json::from_str::<Value>(data).is_err());
+    assert!(!text.contains("[DONE]"));
+}
+
+/// Verifies: REQ-TST-011/AC1
+#[tokio::test]
+async fn client_disconnect_is_recorded() {
+    let items = (0..10).map(|i| i.to_string()).collect();
+    let f = spawn(ab().with_fault(
+        "POST /v1/chat/completions",
+        Fault::Chunks {
+            items,
+            delay_ms: 100,
+        },
+    ))
+    .await;
+    let mut r = reqwest::Client::new()
+        .post(chat_url(&f))
+        .json(&json!({"model": "A", "stream": true, "messages": []}))
+        .send()
+        .await
+        .unwrap();
+    r.chunk().await.unwrap();
+    drop(r);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let d = f.recorder.of_kind("disconnect");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0]["path"], "/v1/chat/completions");
+}
