@@ -176,3 +176,38 @@ fn bad_scenario_exits_2_with_a_diagnostic() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("bad scenario"));
 }
+
+/// Verifies: REQ-TST-011/AC1
+#[test]
+fn record_cli_prints_a_liveness_table_and_exit_code() {
+    let d = tmpdir("reccli");
+    let (mut child, base) = start(&mut Command::new(BIN));
+    let out = Command::new(BIN)
+        .args(["record", "--upstream", &base, "--out"])
+        .arg(d.join("cap"))
+        .output()
+        .unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let table = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        table
+            .lines()
+            .any(|l| l.starts_with("/health") && l.contains("LIVE")),
+        "{table}"
+    );
+    let out = Command::new(BIN)
+        .args(["record", "--upstream", "http://127.0.0.1:1", "--out"])
+        .arg(d.join("down"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let out = Command::new(BIN).args(["record"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}

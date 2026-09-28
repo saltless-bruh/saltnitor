@@ -118,7 +118,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Done when:** 32 entries are each confirmed or disputed with a reason.
   - [!] BLOCKED: T0.3 — BD-32 needs a real /v1/models sample. Options: R0 capture after T0.4 (planned). Need: nothing — resolves after T0.4.
 
-- [ ] **T0.4 — Fake runtime tool** · *test infrastructure*
+- [x] **T0.4 — Fake runtime tool** · *test infrastructure*
   - **Reqs:** REQ-TST-011, REQ-TST-006
   - **Depends:** T0.1
   - **Files:** root `Cargo.toml` (`[workspace]`), `tools/fake-llama-server/**`, `tests/fixtures/captures/**` (CR-2)
