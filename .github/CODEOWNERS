@@ -1,0 +1,8 @@
+# Protected paths (REQ-TST-012, CR-3). Changes need the operator's review on the vnext → master PR,
+# and are listed per gate by scripts/gate.sh for approval in docs/specs/vnext/evidence/G<n>.md.
+/docs/specs/         @saltless-bruh
+/tests/acceptance/   @saltless-bruh
+/tests/fixtures/     @saltless-bruh
+/scripts/gate.sh     @saltless-bruh
+**/snapshots/**      @saltless-bruh
+/.github/CODEOWNERS  @saltless-bruh

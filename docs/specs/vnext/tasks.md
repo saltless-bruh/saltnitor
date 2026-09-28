@@ -165,6 +165,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `.github/CODEOWNERS`, `tests/acceptance/README.md`, `scripts/gate.sh`, `docs/specs/vnext/evidence/TEMPLATE.md`, `docs/specs/vnext/tools/verifier-prompt.md`, `scripts/real-check.sh` (CR-2)
   - **Do:** add CODEOWNERS (operator) for `docs/specs/**`, `tests/acceptance/**`, `tests/fixtures/**`, `scripts/gate.sh`, and `**/snapshots/**`. Write `scripts/gate.sh G<n>`, which runs a gate's automated rows and prints a PASS/FAIL table. The operator enables branch protection on `master` (reviews required from code owners) and protects `vnext` against force-push and deletion; `gate.sh` lists protected-path changes since the previous gate for operator approval (CR-3). Add `scripts/real-check.sh` (R1 real-world journey, `[HW]`, CR-2). Add the evidence template (Appendix A, including the anti-gaming rubric) and `verifier-prompt.md`: the instructions for a fresh-context reviewer, which gets only requirements, diff, and evidence, and is told to report gaps that affect correctness or stated requirements.
   - **Done when:** `scripts/gate.sh G0` runs; the operator confirms branch protection in `evidence/G0.md`.
+  - [!] BLOCKED: T0.10 — branch protection must be enabled by the operator (CR-3). Options: GitHub UI or the `gh api` commands in the Phase 0 plan, Task 14 Step 7. Need: operator enables it and confirms in `evidence/G0.md`.
 
 - [ ] **T0.11 — Test baseline record**
   - **Reqs:** REQ-CI-005/AC2
