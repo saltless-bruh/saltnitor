@@ -24,7 +24,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 
 ### BD-04 — `?token=` is always accepted on `/v1/ensure/stream`
 - **Evidence (c89f278):** `src/control_api.rs:241`, `src/control_api.rs:319` — `req.token.as_deref() == Some(t.as_str())`
-- **Repro:** `curl -N '127.0.0.1:8765/v1/ensure/stream?profile=A&token=<control_token>'` → 200 with no header; there is no switch to refuse query tokens.
+- **Repro:** `cargo test bd04_query_token_is_always_accepted -- --ignored --nocapture` → HTTP 200 with a `?token=` and no header; there is no switch to refuse query tokens.
 - **Status:** confirmed — the query token is compared unconditionally.
 - **Fixed by:**
 
@@ -169,13 +169,13 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 ### BD-28 — `/v1/models` lists every configured profile
 - **Evidence (c89f278):** `src/control_api.rs:336` — built from `api.profiles.keys()` only
 - **Repro:** configure a profile whose model file is missing → it is still listed.
-- **Status:** confirmed — no availability check.
+- **Status:** confirmed — no availability check; pinned (not endorsed) by T0.6 test `pins_bd28_models_lists_every_configured_profile`.
 - **Fixed by:**
 
 ### BD-29 — Inconsistent OOM status and plain-text chat errors
 - **Evidence (c89f278):** `src/control_api.rs:299`, `src/control_api.rs:369` — 507 on `/v1/ensure`, 503 on chat
 - **Repro:** oracle reject via both routes → 507 JSON vs 503 plain text.
-- **Status:** confirmed — see T0.6 tests `ensure_oracle_rejects_without_loading` and `chat_oracle_reject_is_503`.
+- **Status:** confirmed — pinned (not endorsed) by T0.6 tests `pins_bd29_ensure_oracle_reject_is_507_json`, `pins_bd29_chat_oracle_reject_is_503_plain_text`, `pins_bd29_chat_errors_are_plain_text`.
 - **Fixed by:**
 
 ### BD-30 — Tuner title says router.env

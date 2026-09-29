@@ -18,6 +18,13 @@ pub const ENDPOINTS: &[(&str, &str)] = &[
 ];
 /// String fields that may carry user text; their values are replaced before saving.
 const REDACT_KEYS: &[&str] = &["prompt", "content", "text", "generated", "generated_text"];
+/// Command-line flags whose value is a secret (router children echo their argv in `/models`).
+const SECRET_FLAGS: &[&str] = &[
+    "--api-key",
+    "--api-key-file",
+    "--hf-token",
+    "--ssl-key-file",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -250,7 +257,29 @@ pub fn redact(v: &mut Value) {
                 }
             }
         }
-        Value::Array(a) => a.iter_mut().for_each(redact),
+        Value::Array(a) => {
+            let mut mask_next = false;
+            for x in a.iter_mut() {
+                if let Value::String(s) = x {
+                    if mask_next {
+                        *s = "<redacted>".into();
+                        mask_next = false;
+                        continue;
+                    }
+                    if SECRET_FLAGS.contains(&s.as_str()) {
+                        mask_next = true;
+                    } else if let Some(flag) = SECRET_FLAGS
+                        .iter()
+                        .find(|f| s.starts_with(&format!("{f}=")))
+                    {
+                        *s = format!("{flag}=<redacted>");
+                    }
+                } else {
+                    mask_next = false;
+                    redact(x);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -388,6 +417,23 @@ mod tests {
         assert_eq!(
             sanitize_home(r#"path /home/laz/ai-models/x and /home/ alone and "/home/bob/q""#),
             r#"path ${HOME}/ai-models/x and /home/ alone and "${HOME}/q""#
+        );
+    }
+
+    /// Verifies: REQ-TST-011/AC1
+    #[test]
+    fn redact_masks_secret_values_in_argv_arrays() {
+        let mut v = json!({"status": {"args": [
+            "llama-server", "--api-key", "sk-live-1", "--port", "8080",
+            "--hf-token=hf_abc", "--ssl-key-file", "/k.pem", "--api-key-file", "/tok"
+        ]}});
+        redact(&mut v);
+        assert_eq!(
+            v,
+            json!({"status": {"args": [
+                "llama-server", "--api-key", "<redacted>", "--port", "8080",
+                "--hf-token=<redacted>", "--ssl-key-file", "<redacted>", "--api-key-file", "<redacted>"
+            ]}})
         );
     }
 

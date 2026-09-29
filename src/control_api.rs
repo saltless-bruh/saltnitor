@@ -713,7 +713,10 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
     #[tokio::test]
-    async fn models_lists_profile_ids_openai_style() {
+    async fn pins_bd28_models_lists_every_configured_profile() {
+        // Known defect BD-28 (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
+        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
+
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("A", fits()), ("B", fits())],
@@ -847,7 +850,10 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-MIG-007/AC2
     #[tokio::test]
-    async fn ensure_oracle_rejects_without_loading() {
+    async fn pins_bd29_ensure_oracle_reject_is_507_json() {
+        // Known defect BD-29 (507 here vs 503 on chat) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
+        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
+
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("B", never_fits())],
@@ -965,7 +971,29 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
     #[tokio::test]
-    async fn ensure_stream_accepts_the_query_token() {
+    async fn ensure_stream_rejects_a_wrong_query_token() {
+        let r = rig(
+            scenario("control-api-legacy.toml"),
+            &[("A", fits())],
+            Some("t0k"),
+        )
+        .await;
+        let bad = r
+            .http
+            .get(r.url("/v1/ensure/stream?profile=A&token=nope"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            (bad.status().as_u16(), bad.text().await.unwrap()),
+            (401, "bad token".to_string())
+        );
+    }
+
+    /// BD-04 evidence probe — the query token is always accepted; measured, not asserted (REQ-MIG-002/AC3).
+    #[tokio::test]
+    #[ignore = "BD-04 evidence probe: cargo test bd04_query_token_is_always_accepted -- --ignored --nocapture"]
+    async fn bd04_query_token_is_always_accepted() {
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("A", fits())],
@@ -978,21 +1006,9 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert_eq!(ok.status(), 200);
-        assert_eq!(
-            stages(&ok.text().await.unwrap()).last().unwrap()["status"],
-            "already_resident"
-        );
-        let bad = r
-            .http
-            .get(r.url("/v1/ensure/stream?profile=A&token=nope"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(
-            (bad.status().as_u16(), bad.text().await.unwrap()),
-            (401, "bad token".to_string())
-        );
+        let status = ok.status().as_u16();
+        let last = stages(&ok.text().await.unwrap()).last().cloned();
+        println!("BD-04: ?token= on /v1/ensure/stream → HTTP {status}, last stage {last:?}");
     }
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-MIG-007/AC1, REQ-TST-002/AC1
@@ -1030,7 +1046,10 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
     #[tokio::test]
-    async fn chat_without_or_with_unknown_model_is_rejected() {
+    async fn pins_bd29_chat_errors_are_plain_text() {
+        // Known defect BD-29 (plain-text chat errors) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
+        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
+
         let r = rig(scenario("control-api-legacy.toml"), &[("A", fits())], None).await;
         let (s, _, text) = r
             .post_raw("/v1/chat/completions", r#"{"messages":[]}"#)
@@ -1067,7 +1086,10 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
     #[tokio::test]
-    async fn chat_oracle_reject_is_503() {
+    async fn pins_bd29_chat_oracle_reject_is_503_plain_text() {
+        // Known defect BD-29 (503 here vs 507 on ensure) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
+        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
+
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("B", never_fits())],

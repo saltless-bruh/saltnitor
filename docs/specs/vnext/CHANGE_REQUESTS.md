@@ -3,6 +3,7 @@
 CR-1 · 2026-09-28 · affects: T0.1, REQ-CI-001 (scope only) · found in: Phase 0 design
 Problem: `.github/workflows/rust.yml` triggers only on `master`, so no P0 commit on `vnext` gets CI and the Definition of Done item "CI green on the pushed commit" cannot be met until T1.3. · Proposal: in T0.1, add `vnext` to the `push` and `pull_request` branch lists; change nothing else (T1.3 still owns the CI rework). · Impact: T0.1 Files gains `.github/workflows/rust.yml`.
 Status: APPROVED (operator, 2026-09-28 — design D3)
+Addendum 2026-09-29 (final review): the test step also needs `--workspace`, otherwise CI runs only the root crate and skips the fake runtime's 39 tests. Applied; OPEN for operator acknowledgement.
 
 CR-2 · 2026-09-28 · affects: T0.4, T0.3, T0.10, Appendix A evidence template · found in: Phase 0 design
 Problem: controlled-environment tests alone cannot show that the upgraded system still works on the real machine. · Proposal: `fake-llama-server record` (R0: read-only GETs of `/health`, `/models`, `/v1/models`, `/props`, `/slots`, `/metrics`; sanitized; liveness + shape-drift table) and `replay_from` scenarios in T0.4; `scripts/real-check.sh` (R1, `[HW]`, operator "go" per run) in T0.10; captures under `tests/fixtures/captures/`; each gate's evidence reruns R0 + R1 and diffs against `captures/baseline/`. · Impact: T0.4, T0.10 scope; G0 needs the R1 baseline.
