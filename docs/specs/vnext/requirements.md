@@ -1,6 +1,6 @@
 # Saltnitor vNext — Requirements Specification
 
-> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.2 · **Date:** 2026-09-28
+> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.3 · **Date:** 2026-09-29
 > **Baseline code:** `saltless-bruh/saltnitor` @ `c89f278` (`master`) · **Work branch:** `vnext`
 > **Sources:** **[BP]** `SALTNITOR_VNEXT_BLUEPRINT.md` · **[TP]** *Technical Proposal — Saltnitor Qwen MoE Runtime, Tuning Laboratory, and Remote Agent Server*
 > **Companion:** `tasks.md` — the work queue. This file is the contract every task is checked against.
@@ -217,6 +217,8 @@ Each defect must be re-verified in T0.3 before its fix (REQ-MIG-006).
 | BD-30 | The tuner title says "Deep router.env Tuner" but it writes `router.ini` (`ui.rs:355`) | REQ-DOC-001 |
 | BD-31 | The control-API address is hardcoded to `127.0.0.1` (`main.rs:231`) | REQ-REM-001, 002 |
 | BD-32 | *Suspected — verify with a captured fixture:* `router_loaded()` looks for `loaded`/`state`/`status` strings (`control_api.rs:101–103`), but current router builds report `"status": {"value": "loaded"}`. If so, the already-resident fast path never triggers and every request pays a warm-load round trip. | REQ-RT-022 |
+| BD-33 | `parse_params_b` misreads decimal sizes: `.` becomes a space, so `…-0.5B…` parses as 5 B (`control_api.rs:435`) *(r2.3, CR-5)* | REQ-ORC-001 |
+| BD-34 | `parse_bpw` has no `Q4_0`/`Q4_1` arm; those quants fall through to the 5.0 default (`control_api.rs:443`) *(r2.3, CR-5)* | REQ-ORC-001 |
 
 ---
 
@@ -1764,3 +1766,4 @@ Server-level flags (`--host`, `--port`, `--api-key`, `--models-max`, `--no-model
 | r2 | 2026-09-27 | Post-audit rework: EARS acceptance criteria for every requirement; `[PROP]` tags; generated Phase/Tasks back-references; new MIG-007, RT-021, RT-022, MOE-012, TST-012…016, DOC-006, DOC-007; DEC-17; ASM table; BD-32 (suspected); research corrections for Codacus flags (async default-on, trace invocation, merge by concatenation, ~900 MB margin) and llama.cpp router mode (status objects, `--no-models-autoload`, `--models-max` race); OQ-01 resolved and OQ-02 partly resolved; PRX-020 made MUST. **Retired:** TST-003 → SCH-010; TST-004 → RT-005; TST-009 → TUI-009/MIG-005; BEN-013 → SCH-008; MOE-010 → INV-11; REM-004 → SEC-002; REM-006 → SEC-007; TEL-007 → ARCH-006. PROF-007 narrowed to the non-served case (the listing rule lives in PRX-014). **Verification pass:** tasks may cite single ACs, and an AC is due at the first phase that covers it; compound ACs split so each lands in one phase (MIG-007/AC5→AC5+AC6, SEC-003/AC3→AC3+AC4, CI-008/AC1→AC1+AC4, DOC-006/AC1→AC1+AC2); `Verify` fields generated from AC markers; MIG-007/AC7 makes v1-config loading until v1.0 explicit; backward-traceability rows for NFR, DOC, and research-derived requirements; `spec_lint.py` extended and given a self-test. |
 | r2.1 | 2026-09-28 | Operator decision: the root agent guide is `CLAUDE.md`, not `AGENTS.md`. REQ-DOC-005 retargeted and its limit raised to 220 lines (parameter renamed `docs.agents_md_max_lines` → `docs.claude_md_max_lines`); REQ-REPO-006/AC1 root list updated to match. `tasks.md`: T0.1 checks `CLAUDE.md` instead of writing `AGENTS.md`, also moves BP/TP into `sources/`; Appendix B skeleton retired. |
 | r2.2 | 2026-09-28 | CR-1…CR-3 approved (Phase 0 design): `vnext` CI trigger in T0.1; R0 record/replay in T0.4 and R1 `scripts/real-check.sh` in T0.10 with captures under `tests/fixtures/captures/`; branch protection = full on `master`, force-push/deletion guard on `vnext`, protected-path changes listed per gate. REQ-TST-012/AC1 wording unchanged. |
+| r2.3 | 2026-09-29 | CR-5 approved: BD-33 (decimal size tokens) and BD-34 (`Q4_0`/`Q4_1` bpw) added to §5, both fixed by REQ-ORC-001. CR-4 approved (spec_lint self-test seeds on the first unticked task). CR-1 addendum approved (CI runs `cargo test --workspace`). T0.3 wording follows the register size. |

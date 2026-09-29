@@ -22,6 +22,7 @@ KEY_RE = re.compile(r"KeyCode::(Char\('(?:\\.|[^'])'\)|F\(\d+\)|[A-Za-z]+)")
 CITE_RE = re.compile(r"src/[\w/]+\.rs:\d+")
 BD_HEAD = re.compile(r"^### (BD-\d{2}) — .+$", re.M)
 PATH_LINE = re.compile(r"`?([\w./-]+\.[\w]+|\.gitignore):(\d+)")
+REGISTER_ROW = re.compile(r"^\| *(BD-\d{2}) *\|", re.M)
 
 
 def routes(src: str) -> set[str]:
@@ -37,10 +38,17 @@ def missing_citations(doc: str, tokens: set[str]) -> list[str]:
     return sorted(t for t in tokens if not any(f"`{t}`" in line for line in cited))
 
 
-def check_defects(doc: str, allow_blocked: bool, line_exists: Callable[[str, int], bool]) -> list[str]:
+def register_ids(req_text: str) -> list[str]:
+    """BD ids listed as rows of the defect table in requirements.md §5, in order."""
+    return REGISTER_ROW.findall(req_text)
+
+
+def check_defects(doc: str, allow_blocked: bool, line_exists: Callable[[str, int], bool],
+                  expected: list[str] | None = None) -> list[str]:
     parts = BD_HEAD.split(doc)
     entries = dict(zip(parts[1::2], parts[2::2]))
-    expected = [f"BD-{i:02d}" for i in range(1, 33)]
+    if expected is None:
+        expected = [f"BD-{i:02d}" for i in range(1, 33)]
     errors: list[str] = []
     for bd in expected:
         body = entries.get(bd)
@@ -66,7 +74,7 @@ def check_defects(doc: str, allow_blocked: bool, line_exists: Callable[[str, int
             errors.append(f"{bd}: still BLOCKED")
         if not re.search(r"^- \*\*Fixed by:\*\*", body, re.M):
             errors.append(f"{bd}: missing 'Fixed by:' line")
-    errors += [f"{bd}: not in the BD-01…BD-32 register" for bd in sorted(set(entries) - set(expected))]
+    errors += [f"{bd}: not in the requirements.md §5 register" for bd in sorted(set(entries) - set(expected))]
     return errors
 
 
@@ -99,9 +107,10 @@ def main(argv: list[str]) -> int:
             print(f"BEHAVIOR.md: `{t}` is not cited on a line with a src/…:line citation")
         print(f"inventory: {len(tokens) - len(missing)}/{len(tokens)} cited")
         return 1 if missing else 0
+    expected = register_ids((root / "docs/specs/vnext/requirements.md").read_text(encoding="utf-8"))
     errors = check_defects((base / "DEFECTS.md").read_text(encoding="utf-8"), a.allow_blocked,
-                           lambda p, n: 0 < n <= _baseline_lines(p))
-    print("\n".join(errors) or "defects: 32/32 complete")
+                           lambda p, n: 0 < n <= _baseline_lines(p), expected)
+    print("\n".join(errors) or f"defects: {len(expected)}/{len(expected)} complete")
     return 1 if errors else 0
 
 

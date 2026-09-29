@@ -114,8 +114,8 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Reqs:** REQ-MIG-006
   - **Depends:** T0.1
   - **Files:** `docs/specs/vnext/baseline/DEFECTS.md`
-  - **Do:** re-verify BD-01…BD-32 at `c89f278`: confirm the evidence lines, add a one-line reproduction, leave `Fixed by:` empty. BD-32 needs a `/models` sample from the operator's real router `[HUMAN]` (or the upstream docs); mark it confirmed or disputed.
-  - **Done when:** 32 entries are each confirmed or disputed with a reason.
+  - **Do:** re-verify every BD in the `requirements.md` §5 register (BD-01…BD-34 as of r2.3) at `c89f278`: confirm the evidence lines, add a one-line reproduction, leave `Fixed by:` empty. BD-32 needs a `/models` sample from the operator's real router `[HUMAN]` (or the upstream docs); mark it confirmed or disputed.
+  - **Done when:** every register entry (34 as of r2.3) is confirmed or disputed with a reason.
 
 - [x] **T0.4 — Fake runtime tool** · *test infrastructure*
   - **Reqs:** REQ-TST-011, REQ-TST-006

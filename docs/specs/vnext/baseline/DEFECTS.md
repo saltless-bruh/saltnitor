@@ -1,6 +1,6 @@
 # Defect register — Saltnitor @ c89f278
 
-Re-verified 2026-09-28 against `c89f278` (every cited line was read at that commit). `Fixed by:` is filled when the fixing task lands. REQ-MIG-006.
+Re-verified 2026-09-28 against `c89f278`; BD-33/34 added 2026-09-29 (CR-5, r2.3) (every cited line was read at that commit). `Fixed by:` is filled when the fixing task lands. REQ-MIG-006.
 Status meanings: `confirmed` — the defect is visible at the cited lines; `disputed` — it is not; `BLOCKED` — evidence still needed.
 
 ### BD-01 — Malformed config silently becomes defaults
@@ -195,12 +195,17 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Repro:** `fake-llama-server record --upstream http://127.0.0.1:8080 --out tests/fixtures/captures/baseline/r0`, then inspect `v1_models.json` for the shape of `status`.
 - **Status:** confirmed — the live router reports `status` as an object (`{"value": "unloaded", "args": […], "preset": "…", "failed": true, "exit_code": 10}`), so `m["status"].as_str()` is always `None`; none of the three checks can match and the resident fast path never fires.
 - **Probe (T0.6, `bd32_status_object_not_recognised`):** fake router reports A loaded in status-object form; Saltnitor `/v1/status` → `resident_models = []`.
-- **Observation (live system, 2026-09-28, not a Saltnitor defect):** all 5 router models were `unloaded` with `"failed": true, "exit_code": 10` at capture time — the router's last load attempt failed for every model. Reported to the operator.
+- **Observation (live system, corrected 2026-09-29, not a Saltnitor defect):** every router model shows `"failed": true, "exit_code": 10` right after the router starts, with no load attempted. Cause: an upstream llama.cpp bug at build b9105 — the `server_model_meta` initializer in `tools/server/server-models.cpp:340` omits the `loaded_info` field, so `DEFAULT_STOP_TIMEOUT` (10) lands in `exit_code` and `is_failed()` is true until the model is first loaded (`load()` resets it, line 482). Cosmetic: loads are not affected.
 - **Fixed by:**
 
-## Observations (not in the BD register)
+### BD-33 — `parse_params_b` misreads decimal sizes
+- **Evidence (c89f278):** `src/control_api.rs:435` — `name.to_uppercase().replace(['-', '_', '.'], " ")`
+- **Repro:** `parse_params_b("Qwen2.5-0.5B-Instruct.gguf")` → `Some(5.0)`: after `.` becomes a space the tokens are `0` and `5B`, so a 0.5 B model is estimated as 5 B.
+- **Status:** confirmed — found while writing the T0.5 characterization tests; added by CR-5 (r2.3). Deliberately not pinned by any test.
+- **Fixed by:**
 
-Found while writing the T0.5 characterization tests. Not pinned by any test; proposed as BD-33/BD-34 in CR-5 (operator decides).
-
-- **`parse_params_b` misreads decimal sizes** — `src/control_api.rs:435` replaces `.` with a space before splitting, so `Qwen2.5-0.5B-Instruct.gguf` yields `Some(5.0)` (the `5B` of `0.5B`), a 10× over-estimate.
-- **`parse_bpw` has no `Q4_0`/`Q4_1` case** — `src/control_api.rs:443`: `m-Q4_0.gguf` matches none of the arms and falls through to the 5.0 default (~4.5 bpw actual).
+### BD-34 — `parse_bpw` has no `Q4_0`/`Q4_1` case
+- **Evidence (c89f278):** `src/control_api.rs:443`, `src/control_api.rs:449` — no arm matches `Q4_0`; the chain ends in `else { 5.0 }`
+- **Repro:** `parse_bpw("m-Q4_0.gguf")` → `5.0` (actual ≈ 4.5 bpw), so Q4_0/Q4_1 models are over-estimated.
+- **Status:** confirmed — found while writing the T0.5 characterization tests; added by CR-5 (r2.3). Deliberately not pinned by any test.
+- **Fixed by:**

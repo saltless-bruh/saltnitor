@@ -49,7 +49,7 @@ class DefectsTest(unittest.TestCase):
         doc = self.full().replace("### BD-07 — title", "### BD-99 — title")
         errs = cbd.check_defects(doc, False, lambda p, n: True)
         self.assertIn("BD-07: missing entry", errs)
-        self.assertIn("BD-99: not in the BD-01…BD-32 register", errs)
+        self.assertIn("BD-99: not in the requirements.md §5 register", errs)
 
     def test_citation_must_exist_at_baseline(self):
         errs = cbd.check_defects(self.full(), False, lambda p, n: n < 75)
@@ -69,6 +69,26 @@ class DefectsTest(unittest.TestCase):
         self.assertIn("BD-03: Status must be 'confirmed|disputed|BLOCKED — <reason>'",
                       cbd.check_defects(doc, False, lambda p, n: True))
 
+
+
+class RegisterTest(unittest.TestCase):
+    REQ = (
+        "| ID | Defect | Fixed by |\n|---|---|---|\n"
+        "| BD-01 | Malformed config (`main.rs:75`) | REQ-CFG-003 |\n"
+        "| BD-02 | Buffers (`control_api.rs:388`) | REQ-PRX-002 |\n"
+        "| BD-33 | Decimal sizes misread | REQ-ORC-001 |\n"
+        "Text mentioning BD-99 outside a table row is ignored.\n"
+    )
+
+    def test_register_ids_come_from_the_requirements_table(self):
+        self.assertEqual(cbd.register_ids(self.REQ), ["BD-01", "BD-02", "BD-33"])
+
+    def test_defects_are_checked_against_the_given_register(self):
+        doc = entry("BD-01") + entry("BD-02")
+        errs = cbd.check_defects(doc, False, lambda p, n: True, ["BD-01", "BD-02", "BD-33"])
+        self.assertEqual(errs, ["BD-33: missing entry"])
+        extra = cbd.check_defects(doc + entry("BD-07"), False, lambda p, n: True, ["BD-01", "BD-02"])
+        self.assertEqual(extra, ["BD-07: not in the requirements.md §5 register"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Project:** Saltnitor — hardware-aware control plane and tuning lab for local `llama.cpp` inference (`saltnitor`, Rust 2024)
-**Spec:** `saltnitor-vnext` r2.2 · baseline `master` @ `c89f278` · work branch `vnext`
+**Spec:** `saltnitor-vnext` r2.3 · baseline `master` @ `c89f278` · work branch `vnext`
 
 This file is loaded on every turn. It is short on purpose: at most 220 lines (REQ-DOC-005). Read it, then read the spec.
 
@@ -15,7 +15,7 @@ The specification is the source of truth. Code serves the spec, not the other wa
 
 | File | Role | When you read it |
 |---|---|---|
-| `docs/specs/vnext/requirements.md` | The contract: 274 requirements (`REQ-<AREA>-nnn`), 439 EARS acceptance criteria, invariants `INV-01…18`, decisions `DEC-*`, baseline defects `BD-01…32`, parameters §6 | §0–§6 once; then only the IDs your task cites |
+| `docs/specs/vnext/requirements.md` | The contract: 274 requirements (`REQ-<AREA>-nnn`), 439 EARS acceptance criteria, invariants `INV-01…18`, decisions `DEC-*`, baseline defects `BD-01…34`, parameters §6 | §0–§6 once; then only the IDs your task cites |
 | `docs/specs/vnext/tasks.md` | The work queue: 150 tasks, phases P0–P11, each ending in a gate G0–G11 | Every session; it is your working file |
 | `docs/specs/vnext/sources/SALTNITOR_VNEXT_BLUEPRINT.md` — **[BP]** | The feature guide: what each new component promises and how it should behave (daemon, runtime backends, oracle v2, scheduler, proxy v2, benchmark lab, MoE lab, TUI redesign, error model, design rules §30) | When a task's **Read first** cites `BP §n`, or you need the intent behind a requirement |
 | `docs/specs/vnext/sources/Technical Proposal — Saltnitor Qwen MoE Runtime, Tuning Laboratory, and Remote Agent Server.md` — **[TP]** | The *why*: the motivation for vNext. It turns Saltnitor into a runtime/tuning lab for Qwen3.6-35B-A3B on the Codacus `perf` fork, served remotely over Tailscale to OpenCode / DeepSeek Harness | When a task cites `TP §n`, or when judging whether a design choice serves the goal |
