@@ -32,6 +32,27 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(cbd.missing_citations(doc, {"GET /healthz", "POST /v1/ensure"}), ["POST /v1/ensure"])
 
 
+class CitationLineTest(unittest.TestCase):
+    SRC = {"src/main.rs": "fn main() {\n    KeyCode::Tab => next(),\n    KeyCode::Char('q') | KeyCode::Esc => quit(),\n}\n",
+           "src/control_api.rs": "let app = Router::new()\n    .route(\"/healthz\", get(h))\n"}
+
+    def test_row_passes_when_a_cited_line_holds_one_of_its_tokens(self):
+        doc = "| `KeyCode::Tab` | main | next | src/main.rs:2 |\n| `KeyCode::Esc` / `KeyCode::Char('q')` | main | quit | src/main.rs:3, src/main.rs:99 |\n"
+        self.assertEqual(cbd.misplaced_citations(doc, self.SRC), [])
+
+    def test_row_fails_when_no_cited_line_holds_its_tokens(self):
+        doc = "| `KeyCode::Tab` | main | next | src/main.rs:3 |\n"
+        self.assertEqual(cbd.misplaced_citations(doc, self.SRC),
+                         ["`KeyCode::Tab`: none of src/main.rs:3 contains it"])
+
+    def test_route_rows_are_checked_by_path(self):
+        ok = "| `GET /healthz` | none | 200 | empty | src/control_api.rs:2 |\n"
+        bad = "| `GET /healthz` | none | 200 | empty | src/control_api.rs:1 |\n"
+        self.assertEqual(cbd.misplaced_citations(ok, self.SRC), [])
+        self.assertEqual(cbd.misplaced_citations(bad, self.SRC),
+                         ["`GET /healthz`: none of src/control_api.rs:1 contains it"])
+
+
 def entry(bd, status="confirmed — reproduced", evidence="`src/main.rs:75`"):
     return (f"### {bd} — title\n- **Evidence (c89f278):** {evidence}\n- **Repro:** run it\n"
             f"- **Status:** {status}\n- **Fixed by:**\n\n")

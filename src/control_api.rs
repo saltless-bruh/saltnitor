@@ -1164,4 +1164,44 @@ mod tests {
             v["resident_models"]
         );
     }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
+    #[tokio::test]
+    async fn pins_bd29_chat_load_failure_is_502_plain_text() {
+        // Known defect BD-29 (plain-text chat errors): pinned so a fix shows up as a deliberate
+        // change, not endorsed as correct (REQ-MIG-002/AC3).
+        let sc = scenario("control-api-legacy.toml").with_fault(
+            "POST /v1/chat/completions",
+            Fault::Status {
+                code: 500,
+                body: "boom".into(),
+            },
+        );
+        let r = rig(sc, &[("A", fits()), ("B", fits())], None).await;
+        let (s, ct, text) = r
+            .post_raw("/v1/chat/completions", r#"{"model":"B","messages":[]}"#)
+            .await;
+        assert_eq!(
+            (s, ct.as_str(), text.as_str()),
+            (
+                502,
+                "text/plain; charset=utf-8",
+                "saltnitor: load failed: router load failed: router returned 500 Internal Server Error"
+            )
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
+    #[tokio::test]
+    async fn pins_bd29_chat_upstream_body_failure_is_502_plain_text() {
+        // Known defect BD-29 (plain-text chat errors): pinned, not endorsed (REQ-MIG-002/AC3).
+        let sc = scenario("control-api-legacy.toml")
+            .with_fault("POST /v1/chat/completions", Fault::CrashAfter { chunks: 0 });
+        let r = rig(sc, &[("A", fits())], None).await;
+        let (s, _, text) = r
+            .post_raw("/v1/chat/completions", r#"{"model":"A","messages":[]}"#)
+            .await;
+        assert_eq!(s, 502);
+        assert!(text.starts_with("router read failed: "), "{text}");
+    }
 }

@@ -97,9 +97,13 @@ protected_changes() { # since $1
   git diff --name-only "$1" HEAD -- docs/specs tests/acceptance tests/fixtures scripts/gate.sh \
       .github/CODEOWNERS ':(glob)**/snapshots/**' | while read -r f; do
     [[ $f == "$SPEC/PROGRESS.md" ]] && continue
-    if [[ $f == "$SPEC/tasks.md" ]] && ! git diff -U0 "$1" HEAD -- "$f" \
-        | grep -E '^[-+][^-+]' | grep -qvE '^[-+][[:space:]]*- \[[ x!]\] '; then
-      continue
+    if [[ $f == "$SPEC/tasks.md" ]]; then
+      # Count non-checkbox changed lines; grep -c reads all input (grep -q + pipefail would
+      # SIGPIPE the upstream grep and wrongly skip tasks.md).
+      local other
+      other=$(git diff -U0 "$1" HEAD -- "$f" | grep -E '^[-+][^-+]' \
+        | grep -cvE '^[-+][[:space:]]*- \[[ x!]\] ' || true)
+      [[ $other -eq 0 ]] && continue
     fi
     echo "- $f"
   done

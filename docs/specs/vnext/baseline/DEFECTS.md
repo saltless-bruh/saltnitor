@@ -175,7 +175,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 ### BD-29 — Inconsistent OOM status and plain-text chat errors
 - **Evidence (c89f278):** `src/control_api.rs:299`, `src/control_api.rs:369` — 507 on `/v1/ensure`, 503 on chat
 - **Repro:** oracle reject via both routes → 507 JSON vs 503 plain text.
-- **Status:** confirmed — pinned (not endorsed) by T0.6 tests `pins_bd29_ensure_oracle_reject_is_507_json`, `pins_bd29_chat_oracle_reject_is_503_plain_text`, `pins_bd29_chat_errors_are_plain_text`.
+- **Status:** confirmed — pinned (not endorsed) by T0.6 tests `pins_bd29_ensure_oracle_reject_is_507_json`, `pins_bd29_chat_oracle_reject_is_503_plain_text`, `pins_bd29_chat_errors_are_plain_text`, `pins_bd29_chat_load_failure_is_502_plain_text`, `pins_bd29_chat_upstream_body_failure_is_502_plain_text`.
 - **Fixed by:**
 
 ### BD-30 — Tuner title says router.env

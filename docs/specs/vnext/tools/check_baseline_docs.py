@@ -43,6 +43,25 @@ def register_ids(req_text: str) -> list[str]:
     return REGISTER_ROW.findall(req_text)
 
 
+def misplaced_citations(doc: str, sources: dict[str, str]) -> list[str]:
+    """Rows whose cited src lines contain none of the row's `KeyCode::…` / `METHOD /path` tokens."""
+    errors: list[str] = []
+    lines = {path: text.splitlines() for path, text in sources.items()}
+    for row in doc.splitlines():
+        cites = [(m.group(1), int(m.group(2))) for m in re.finditer(r"(src/[\w/]+\.rs):(\d+)", row)]
+        keys = re.findall(r"`(KeyCode::[^`]+)`", row)
+        routes = re.findall(r"`((?:GET|POST|PUT|DELETE|PATCH) (/[^`]*))`", row)
+        needles = [(k, k) for k in keys] + [(full, f'"{path}"') for full, path in routes]
+        if not cites or not needles:
+            continue
+        hit = any(needle in lines.get(path, [""] * n)[n - 1] if 0 < n <= len(lines.get(path, [])) else False
+                  for path, n in cites for _, needle in needles)
+        if not hit:
+            where = ", ".join(f"{p}:{n}" for p, n in cites)
+            errors.append(f"{' / '.join(f'`{label}`' for label, _ in needles)}: none of {where} contains it")
+    return errors
+
+
 def check_defects(doc: str, allow_blocked: bool, line_exists: Callable[[str, int], bool],
                   expected: list[str] | None = None) -> list[str]:
     parts = BD_HEAD.split(doc)
@@ -105,6 +124,13 @@ def main(argv: list[str]) -> int:
         missing = missing_citations((base / "BEHAVIOR.md").read_text(encoding="utf-8"), tokens)
         for t in missing:
             print(f"BEHAVIOR.md: `{t}` is not cited on a line with a src/…:line citation")
+        doc = (base / "BEHAVIOR.md").read_text(encoding="utf-8")
+        misplaced = misplaced_citations(doc, {p: _git_show(p) for p in ("src/main.rs", "src/control_api.rs")})
+        for m in misplaced:
+            print(f"BEHAVIOR.md: {m}")
+        if misplaced:
+            print(f"inventory: {len(misplaced)} row(s) cite lines that do not contain their token")
+            return 1
         print(f"inventory: {len(tokens) - len(missing)}/{len(tokens)} cited")
         return 1 if missing else 0
     expected = register_ids((root / "docs/specs/vnext/requirements.md").read_text(encoding="utf-8"))

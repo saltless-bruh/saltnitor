@@ -1054,4 +1054,18 @@ mod tests {
             None
         );
     }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_stops_at_the_next_section_when_several_follow() {
+        let ini = "[A]\nk = 1\n[B]\nn = 2\n[C]\nn = 3\n";
+        assert_eq!(
+            upsert_ini_section(ini, "A", &kv(&[("n", "7")])).as_deref(),
+            Some("[A]\nk = 1\nn = 7\n[B]\nn = 2\n[C]\nn = 3\n")
+        );
+        assert_eq!(
+            upsert_ini_section(ini, "B", &kv(&[("n", "7")])).as_deref(),
+            Some("[A]\nk = 1\n[B]\nn = 7\n[C]\nn = 3\n")
+        );
+    }
 }

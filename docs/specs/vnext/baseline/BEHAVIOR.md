@@ -42,52 +42,52 @@ Modes are checked in this order: GPU inspector → CPU inspector → tuner → c
 
 | Key token | Context | Action | Citation |
 |---|---|---|---|
-| `KeyCode::Esc` | GPU inspector | close inspector (also `g`, `q`) | src/main.rs:453 |
-| `KeyCode::Char('g')` | GPU inspector | close inspector | src/main.rs:453 |
-| `KeyCode::Char('q')` | GPU inspector | close inspector | src/main.rs:453 |
+| `KeyCode::Esc` | GPU inspector | close inspector (also `g`, `q`) | src/main.rs:452 |
+| `KeyCode::Char('g')` | GPU inspector | close inspector | src/main.rs:452 |
+| `KeyCode::Char('q')` | GPU inspector | close inspector | src/main.rs:452 |
 | `KeyCode::Up` | GPU inspector | select previous GPU process | src/main.rs:453 |
-| `KeyCode::Down` | GPU inspector | select next GPU process | src/main.rs:458 |
-| `KeyCode::Char('x')` | GPU inspector | `killall -9 <name>` of selected process; refused for `saltnitor`/`llama-server` (BD-05) | src/main.rs:462, src/main.rs:468 |
-| `KeyCode::Delete` | GPU inspector | same as `x` | src/main.rs:462 |
-| `KeyCode::Esc` | CPU inspector | close inspector (also `c`, `q`) | src/main.rs:479 |
-| `KeyCode::Char('c')` | CPU inspector | close inspector | src/main.rs:479 |
-| `KeyCode::Char('q')` | CPU inspector | close inspector | src/main.rs:479 |
-| `KeyCode::Up` / `KeyCode::Down` | CPU inspector | move selection in the RAM process list | src/main.rs:479, src/main.rs:484 |
-| `KeyCode::Char('x')` / `KeyCode::Delete` | CPU inspector | `killall -9 <name>` of selected process, same guard | src/main.rs:488, src/main.rs:494 |
-| `KeyCode::Esc` / `KeyCode::Char('t')` | tuner | close tuner | src/main.rs:505 |
+| `KeyCode::Down` | GPU inspector | select next GPU process | src/main.rs:457 |
+| `KeyCode::Char('x')` | GPU inspector | `killall -9 <name>` of selected process; refused for `saltnitor`/`llama-server` (BD-05) | src/main.rs:461, src/main.rs:468 |
+| `KeyCode::Delete` | GPU inspector | same as `x` | src/main.rs:461 |
+| `KeyCode::Esc` | CPU inspector | close inspector (also `c`, `q`) | src/main.rs:478 |
+| `KeyCode::Char('c')` | CPU inspector | close inspector | src/main.rs:478 |
+| `KeyCode::Char('q')` | CPU inspector | close inspector | src/main.rs:478 |
+| `KeyCode::Up` / `KeyCode::Down` | CPU inspector | move selection in the RAM process list | src/main.rs:479, src/main.rs:483 |
+| `KeyCode::Char('x')` / `KeyCode::Delete` | CPU inspector | `killall -9 <name>` of selected process, same guard | src/main.rs:487, src/main.rs:494 |
+| `KeyCode::Esc` / `KeyCode::Char('t')` | tuner | close tuner | src/main.rs:504 |
 | `KeyCode::Tab` | tuner | next page (1→2→3→1), selection reset | src/main.rs:505 |
 | `KeyCode::Up` / `KeyCode::Down` | tuner | move selected row (page sizes 10/6/6) | src/main.rs:507 |
 | `KeyCode::Left` / `KeyCode::Right` | tuner | decrease / increase the selected value | src/main.rs:509 |
-| `KeyCode::Enter` | tuner | upsert tuned flags into the active model's `[section]` of the hardcoded `/home/laz/ai-models/llama.cpp/router.ini`, then `sudo -n systemctl restart <svc>` (BD-06, BD-25) | src/main.rs:546, src/main.rs:578, src/main.rs:584 |
-| `KeyCode::Esc` | console focused, hot-swap deck | leave the deck | src/main.rs:608 |
-| `KeyCode::Up` / `KeyCode::Down` | console focused, hot-swap deck | move model selection | src/main.rs:608, src/main.rs:616 |
-| `KeyCode::Enter` | console focused, hot-swap deck | set active model, guess NGL from the name (>14B → 24, else 99), 1-token warm-up POST to the router (bypasses the oracle, BD-19) | src/main.rs:623, src/main.rs:653 |
-| `KeyCode::Esc` | console focused, interrogator | leave insert mode | src/main.rs:678 |
-| `KeyCode::Left` / `KeyCode::Right` | console focused, interrogator | move the cursor | src/main.rs:678, src/main.rs:680 |
-| `KeyCode::Up` / `KeyCode::Down` | console focused, interrogator | walk payload history (max 10) | src/main.rs:680, src/main.rs:688 |
-| `KeyCode::Char` | console focused, interrogator | insert character at cursor | src/main.rs:699 |
-| `KeyCode::Backspace` | console focused, interrogator | delete before cursor | src/main.rs:705 |
-| `KeyCode::Delete` | console focused, interrogator | delete at cursor | src/main.rs:713 |
-| `KeyCode::Enter` | console focused, interrogator | push history; POST the payload with `"stream": true` to `http://{host}:{port}/v1/chat/completions`; measure TTFT and t/s | src/main.rs:720, src/main.rs:736 |
-| `KeyCode::Esc` / `KeyCode::Char('h')` / `KeyCode::Char('q')` | help | close help | src/main.rs:799 |
-| `KeyCode::Esc` / `KeyCode::Enter` | search | stop editing the filter | src/main.rs:804 |
+| `KeyCode::Enter` | tuner | upsert tuned flags into the active model's `[section]` of the hardcoded `/home/laz/ai-models/llama.cpp/router.ini`, then `sudo -n systemctl restart <svc>` (BD-06, BD-25) | src/main.rs:545, src/main.rs:578, src/main.rs:584 |
+| `KeyCode::Esc` | console focused, hot-swap deck | leave the deck | src/main.rs:607 |
+| `KeyCode::Up` / `KeyCode::Down` | console focused, hot-swap deck | move model selection | src/main.rs:608, src/main.rs:615 |
+| `KeyCode::Enter` | console focused, hot-swap deck | set active model, guess NGL from the name (>14B → 24, else 99), 1-token warm-up POST to the router (bypasses the oracle, BD-19) | src/main.rs:622, src/main.rs:653 |
+| `KeyCode::Esc` | console focused, interrogator | leave insert mode | src/main.rs:677 |
+| `KeyCode::Left` / `KeyCode::Right` | console focused, interrogator | move the cursor | src/main.rs:678, src/main.rs:679 |
+| `KeyCode::Up` / `KeyCode::Down` | console focused, interrogator | walk payload history (max 10) | src/main.rs:680, src/main.rs:687 |
+| `KeyCode::Char` | console focused, interrogator | insert character at cursor | src/main.rs:698 |
+| `KeyCode::Backspace` | console focused, interrogator | delete before cursor | src/main.rs:704 |
+| `KeyCode::Delete` | console focused, interrogator | delete at cursor | src/main.rs:712 |
+| `KeyCode::Enter` | console focused, interrogator | push history; POST the payload with `"stream": true` to `http://{host}:{port}/v1/chat/completions`; measure TTFT and t/s | src/main.rs:719, src/main.rs:736 |
+| `KeyCode::Esc` / `KeyCode::Char('h')` / `KeyCode::Char('q')` | help | close help | src/main.rs:798 |
+| `KeyCode::Esc` / `KeyCode::Enter` | search | stop editing the filter | src/main.rs:803 |
 | `KeyCode::Backspace` | search | delete last filter character | src/main.rs:804 |
-| `KeyCode::Char` | search | append to the log filter | src/main.rs:806 |
-| `KeyCode::Char('q')` | main | quit (history written to CWD on exit) | src/main.rs:812 |
+| `KeyCode::Char` | search | append to the log filter | src/main.rs:805 |
+| `KeyCode::Char('q')` | main | quit (history written to CWD on exit) | src/main.rs:811 |
 | `KeyCode::Char('t')` | main | open tuner | src/main.rs:812 |
-| `KeyCode::Char('i')` | main | focus the bottom deck | src/main.rs:814 |
+| `KeyCode::Char('i')` | main | focus the bottom deck | src/main.rs:813 |
 | `KeyCode::Tab` | main | toggle bottom deck (Interrogator ↔ Hot-Swap) | src/main.rs:814 |
-| `KeyCode::Char('g')` | main | toggle GPU inspector (closes CPU inspector) | src/main.rs:816 |
+| `KeyCode::Char('g')` | main | toggle GPU inspector (closes CPU inspector) | src/main.rs:815 |
 | `KeyCode::Char('c')` | main | toggle CPU inspector (closes GPU inspector) | src/main.rs:816 |
-| `KeyCode::Char('/')` | main | start log search, filter cleared | src/main.rs:818 |
+| `KeyCode::Char('/')` | main | start log search, filter cleared | src/main.rs:817 |
 | `KeyCode::Char('h')` | main | open help | src/main.rs:818 |
 | `KeyCode::PageUp` / `KeyCode::PageDown` | main | scroll logs (auto-scroll off / resumes at bottom) | src/main.rs:820 |
-| `KeyCode::Esc` | main | close both inspectors | src/main.rs:822 |
-| `KeyCode::Char('S')` | main | `sudo -n systemctl start <svc>` | src/main.rs:824, src/main.rs:826 |
-| `KeyCode::Char('X')` | main | `sudo -n systemctl stop <svc>` | src/main.rs:829, src/main.rs:831 |
-| `KeyCode::Char('R')` | main | `sudo -n systemctl restart <svc>` | src/main.rs:834, src/main.rs:836 |
-| `KeyCode::Char('k')` + Ctrl | main | kill-switch: `sudo -n systemctl stop <svc>`, reports result | src/main.rs:839, src/main.rs:845 |
-| `KeyCode::Char('d')` + Ctrl | main | crash dump to `$HOME/saltnitor_crash_<timestamp>.txt` | src/main.rs:853, src/main.rs:874 |
+| `KeyCode::Esc` | main | close both inspectors | src/main.rs:821 |
+| `KeyCode::Char('S')` | main | `sudo -n systemctl start <svc>` | src/main.rs:823, src/main.rs:826 |
+| `KeyCode::Char('X')` | main | `sudo -n systemctl stop <svc>` | src/main.rs:828, src/main.rs:831 |
+| `KeyCode::Char('R')` | main | `sudo -n systemctl restart <svc>` | src/main.rs:833, src/main.rs:836 |
+| `KeyCode::Char('k')` + Ctrl | main | kill-switch: `sudo -n systemctl stop <svc>`, reports result | src/main.rs:838, src/main.rs:845 |
+| `KeyCode::Char('d')` + Ctrl | main | crash dump to `$HOME/saltnitor_crash_<timestamp>.txt` | src/main.rs:852, src/main.rs:874 |
 
 ## Control-API routes (`control_api::serve`, bound to `127.0.0.1:<control_port>`)
 
