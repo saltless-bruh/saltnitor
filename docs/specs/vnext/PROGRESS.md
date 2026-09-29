@@ -18,3 +18,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-09-29 · G0 · b70afff · BLOCKED · verifier gaps 1–5 addressed (gate.sh protected list, 3 new pins, 36 citations, CR-6); remaining: R1 on Codacus runtime, T0.10 tick, CR-6, verdict
 2026-09-29 · T0.10 · 574f46c · DONE · operator confirmed branch protection (master: code-owner review; vnext: no force-push/deletion); CR-6 approved (r2.4)
 2026-09-29 · G0 · 574f46c · READY · R1 PASS on Codacus runtime; all rows confirmed; awaiting operator verdict
+2026-09-29 · G0 · c155628 · PASSED · operator verdict signed (laz); Phase 0 complete — next: vnext→master PR review, then P1
