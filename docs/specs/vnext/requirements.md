@@ -1,6 +1,6 @@
 # Saltnitor vNext — Requirements Specification
 
-> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.3 · **Date:** 2026-09-29
+> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.4 · **Date:** 2026-09-29
 > **Baseline code:** `saltless-bruh/saltnitor` @ `c89f278` (`master`) · **Work branch:** `vnext`
 > **Sources:** **[BP]** `SALTNITOR_VNEXT_BLUEPRINT.md` · **[TP]** *Technical Proposal — Saltnitor Qwen MoE Runtime, Tuning Laboratory, and Remote Agent Server*
 > **Companion:** `tasks.md` — the work queue. This file is the contract every task is checked against.
@@ -276,7 +276,7 @@ Each requirement: header `REQ-ID — Title`, a meta line (priority · verificati
 > MUST · Verify: T, I · Phase: P0 · Tasks: T0.5, T0.6 · Src: BP §27 Ph0
 - **AC1** Before refactoring, the test suite SHALL pin `upsert_ini_section`, `estimate_footprint`, `parse_params_b`, `parse_bpw`, `Stage::from_outcome`, and the status/body of every control-API route for success and error cases against the fake runtime. (T)
 - **AC2** These tests SHALL pass on the baseline code with no production-code change. (T)
-- **AC3** IF a behavior is a known defect (§5), THEN no characterization test SHALL assert it as correct. (I)
+- **AC3** *(amended r2.4, CR-6)* IF a behavior is a known defect (§5), THEN a characterization test that pins it SHALL be named `pins_bd<nn>_…`, SHALL state in a comment that it pins rather than endorses the behavior, and SHALL be updated by the task that fixes that defect; no other characterization test SHALL assert it. (I)
 
 #### REQ-MIG-003 — Incremental in-place migration
 > MUST · Verify: I, D · Phase: P0 · Tasks: T0.10, T4.12 · Src: BP §3, §27
@@ -1767,3 +1767,4 @@ Server-level flags (`--host`, `--port`, `--api-key`, `--models-max`, `--no-model
 | r2.1 | 2026-09-28 | Operator decision: the root agent guide is `CLAUDE.md`, not `AGENTS.md`. REQ-DOC-005 retargeted and its limit raised to 220 lines (parameter renamed `docs.agents_md_max_lines` → `docs.claude_md_max_lines`); REQ-REPO-006/AC1 root list updated to match. `tasks.md`: T0.1 checks `CLAUDE.md` instead of writing `AGENTS.md`, also moves BP/TP into `sources/`; Appendix B skeleton retired. |
 | r2.2 | 2026-09-28 | CR-1…CR-3 approved (Phase 0 design): `vnext` CI trigger in T0.1; R0 record/replay in T0.4 and R1 `scripts/real-check.sh` in T0.10 with captures under `tests/fixtures/captures/`; branch protection = full on `master`, force-push/deletion guard on `vnext`, protected-path changes listed per gate. REQ-TST-012/AC1 wording unchanged. |
 | r2.3 | 2026-09-29 | CR-5 approved: BD-33 (decimal size tokens) and BD-34 (`Q4_0`/`Q4_1` bpw) added to §5, both fixed by REQ-ORC-001. CR-4 approved (spec_lint self-test seeds on the first unticked task). CR-1 addendum approved (CI runs `cargo test --workspace`). T0.3 wording follows the register size. |
+| r2.4 | 2026-09-29 | CR-6 approved: REQ-MIG-002/AC3 amended — known-defect behavior may be pinned only by tests named `pins_bd<nn>_…` that say they pin rather than endorse, and that the fixing task rewrites (resolves the AC1/AC3 conflict for BD-28/BD-29). |

@@ -23,4 +23,4 @@ Status: APPROVED (operator, 2026-09-29) — applied in r2.3
 
 CR-6 · 2026-09-29 · affects: REQ-MIG-002/AC1, REQ-MIG-002/AC3 · found in: G0 verification
 Problem: AC1 requires the status and body of every control-API route to be pinned for success and error cases; AC3 forbids asserting a known defect as correct. Where the error status itself is the defect (BD-28 profile listing; BD-29 507-vs-503 and plain-text chat errors), no test can satisfy both. Six default-run tests currently pin such behavior, named `pins_bd28_*` / `pins_bd29_*`, each with a comment that the pin is not an endorsement. · Proposal: amend AC3 to "IF a behavior is a known defect (§5), THEN a characterization test that pins it SHALL be named `pins_bd<nn>_…`, SHALL state in a comment that it pins rather than endorses the behavior, and SHALL be updated by the task that fixes that defect; no other characterization test SHALL assert it." · Impact: no code change; the fixing tasks for BD-28/BD-29 must rewrite the named pins.
-Status: OPEN
+Status: APPROVED (operator, 2026-09-29) — applied in r2.4

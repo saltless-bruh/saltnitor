@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Project:** Saltnitor — hardware-aware control plane and tuning lab for local `llama.cpp` inference (`saltnitor`, Rust 2024)
-**Spec:** `saltnitor-vnext` r2.3 · baseline `master` @ `c89f278` · work branch `vnext`
+**Spec:** `saltnitor-vnext` r2.4 · baseline `master` @ `c89f278` · work branch `vnext`
 
 This file is loaded on every turn. It is short on purpose: at most 220 lines (REQ-DOC-005). Read it, then read the spec.
 

@@ -16,3 +16,5 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-09-29 · G0 · 17bb1ca · BLOCKED · evidence drafted: all automated rows PASS, smoke PASS, R0 SHAPE-OK; pending operator: R1 [HW] run (router loads fail, exit_code 10), branch protection, verifier choice, protected-path approval, verdict
 2026-09-29 · CR-4/CR-5/CR-1+ · f90a8f9 · DONE · operator approved; r2.3: BD-33/34 added (register 34/34); router 'failed exit 10' re-diagnosed as upstream b9105 cosmetic bug
 2026-09-29 · G0 · b70afff · BLOCKED · verifier gaps 1–5 addressed (gate.sh protected list, 3 new pins, 36 citations, CR-6); remaining: R1 on Codacus runtime, T0.10 tick, CR-6, verdict
+2026-09-29 · T0.10 · 574f46c · DONE · operator confirmed branch protection (master: code-owner review; vnext: no force-push/deletion); CR-6 approved (r2.4)
+2026-09-29 · G0 · 574f46c · READY · R1 PASS on Codacus runtime; all rows confirmed; awaiting operator verdict
