@@ -1,0 +1,2 @@
+version: 0 (fake-llama-server)
+built with rustc for testing only

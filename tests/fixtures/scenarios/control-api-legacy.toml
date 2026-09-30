@@ -1,0 +1,12 @@
+# Control-API characterization. The router reports the legacy string status that
+# router_loaded() understands at c89f278. BD-32 (status objects) is not pinned here.
+models_shape = "legacy"
+max_loaded = 1
+
+[[models]]
+id = "A"
+loaded = true
+
+[[models]]
+id = "B"
+loaded = false

@@ -1,0 +1,28 @@
+---
+source: src/ui.rs
+expression: "render(&mut fixture(), 79, 16)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 79, height: 16 },
+    content: [
+        "┌─────────────────────────────────────────────────────────────────────────────┐",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                    [!] TERMINAL FOOTPRINT TOO SMALL [!]                     │",
+        "│                                                                             │",
+        "│                   Please expand window to at least 80x16.                   │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "│                                                                             │",
+        "└─────────────────────────────────────────────────────────────────────────────┘",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Red, bg: Reset, underline: Reset, modifier: BOLD | RAPID_BLINK,
+    ]
+}

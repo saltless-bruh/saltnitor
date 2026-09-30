@@ -19,3 +19,10 @@ toml = "1.1.2"
 # --- added for the headless control API (control_api.rs) ---
 axum = "0.8"            # default features include json + tokio + query (all needed)
 tokio-stream = "0.1"    # ReceiverStream + StreamExt for the /v1/ensure/stream SSE body
+
+[workspace]
+members = ["tools/fake-llama-server"]
+
+[dev-dependencies]
+fake-llama-server = { path = "tools/fake-llama-server" }
+insta = "1.48.0"

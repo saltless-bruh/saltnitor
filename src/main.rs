@@ -991,3 +991,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     io::stdout().execute(LeaveAlternateScreen)?;
     Ok(())
 }
+#[cfg(test)]
+mod tests {
+    use super::upsert_ini_section;
+
+    fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_replaces_appends_and_keeps_comments_and_other_sections() {
+        let ini = "[*]\nctx-size = 1\n\n[A]\nmodel = /m/a.gguf\nctx-size = 4096\n; ctx-size = 2\n# note\n\n[B]\nctx-size = 1\n";
+        let got = upsert_ini_section(
+            ini,
+            "A",
+            &kv(&[("ctx-size", "8192"), ("n-gpu-layers", "99")]),
+        );
+        assert_eq!(
+            got.as_deref(),
+            Some(
+                "[*]\nctx-size = 1\n\n[A]\nmodel = /m/a.gguf\nctx-size = 8192\n; ctx-size = 2\n# note\n\nn-gpu-layers = 99\n[B]\nctx-size = 1\n"
+            )
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_matches_keys_without_spaces_and_normalizes_the_line() {
+        assert_eq!(
+            upsert_ini_section("[A]\nctx-size=4096\n", "A", &kv(&[("ctx-size", "1")])).as_deref(),
+            Some("[A]\nctx-size = 1\n")
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_in_the_last_section_appends_and_ends_with_newline() {
+        assert_eq!(
+            upsert_ini_section("[A]\nmodel = x", "A", &kv(&[("n-gpu-layers", "99")])).as_deref(),
+            Some("[A]\nmodel = x\nn-gpu-layers = 99\n")
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_matches_a_header_with_surrounding_whitespace() {
+        assert_eq!(
+            upsert_ini_section("  [A]  \nk = 1\n", "A", &kv(&[("k", "2")])).as_deref(),
+            Some("  [A]  \nk = 2\n")
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_missing_section_is_none() {
+        assert_eq!(
+            upsert_ini_section("[A]\nk = 1\n", "B", &kv(&[("k", "2")])),
+            None
+        );
+    }
+
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    #[test]
+    fn upsert_stops_at_the_next_section_when_several_follow() {
+        let ini = "[A]\nk = 1\n[B]\nn = 2\n[C]\nn = 3\n";
+        assert_eq!(
+            upsert_ini_section(ini, "A", &kv(&[("n", "7")])).as_deref(),
+            Some("[A]\nk = 1\nn = 7\n[B]\nn = 2\n[C]\nn = 3\n")
+        );
+        assert_eq!(
+            upsert_ini_section(ini, "B", &kv(&[("n", "7")])).as_deref(),
+            Some("[A]\nk = 1\n[B]\nn = 7\n[C]\nn = 3\n")
+        );
+    }
+}
