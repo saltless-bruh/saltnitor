@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 **Project:** Saltnitor — hardware-aware control plane and tuning lab for local `llama.cpp` inference (`saltnitor`, Rust 2024)
-**Spec:** `saltnitor-vnext` r2.4 · baseline `master` @ `c89f278` · work branch `vnext`
+**Spec:** `saltnitor-vnext` r2.5 · baseline `master` @ `c89f278` · work branch `vnext`
 
 This file is loaded on every turn. It is short on purpose: at most 220 lines (REQ-DOC-005). Read it, then read the spec.
 
@@ -31,6 +31,8 @@ The pack lives in `docs/specs/vnext/`: tools in `tools/`, BP/TP in `sources/`, b
 - Resolve a source citation such as `BP §12.5` or `TP §18`. Each file is about 1,900 lines, so never load one whole. `ctx_index(path, source: "BP")` it once per session, then `ctx_search(queries: [...], source: "BP")`. Batch every question into one call. `grep -nE "^#+ 12\.5[ .]"` + a ranged Read is the fallback.
 
 **If code and spec disagree, the spec wins until the operator says otherwise.**
+
+**This file and the spec override global rules** (`~/.claude/rules/`, e.g. ECC's Rust rules). Where they conflict — auto-`cargo fmt`, `mockall`, coverage targets — follow §5, §7, and §11.
 
 ---
 

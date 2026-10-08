@@ -201,7 +201,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Reqs:** REQ-TST-012, REQ-TST-014, REQ-TST-016
   - **Files:** `tests/acceptance/g1_*.rs` (target `acceptance`), `scripts/gate.sh` (G1 rows)
   - **Do:** a session that will **not** implement P1 writes the acceptance tests for the G1 rows below, black-box against the built binary plus the fake runtime: first SSE chunk before completion; byte-exact bodies; cancellation; 401 on every protected route; query token refused by default; malformed config → exit 2 with the diagnostic, port free; terminating by PID through the process-control module API leaves a same-named process alive (the TUI path is demonstrated in D3). Also one compositional scenario: auth + streaming + request ID + cancellation in one flow. CI runs the `acceptance` target as informational until G1.
-  - **Done when:** the tests compile, fail for the right reasons against the current code (record the failure output), and the operator approves them via CODEOWNERS review.
+  - **Done when:** the acceptance target is declared `test = false`; the tests compile, except tests that call a Phase 1 API the author names in `tests/acceptance/README.md`, which may fail to compile only for that reason; each test fails for the right reason against the current code (record the failure output); and the operator approves them via CODEOWNERS review (CR-7).
 
 - [ ] **T1.1 — Lockfile and toolchain**
   - **Reqs:** REQ-REPO-001, REQ-REPO-008, REQ-REL-006
@@ -253,7 +253,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
 - [ ] **T1.8 — Error envelope and mapping** · *test-first*
   - **Reqs:** REQ-ERR-001, REQ-ERR-002, REQ-ERR-003, REQ-PRX-020
   - **Depends:** T1.3
-  - **Files:** `src/error.rs` (new), `src/control_api.rs`, `tests/error_mapping.rs`
+  - **Files:** `src/error.rs` (new), `src/lib.rs` (new, CR-7), `src/control_api.rs`, `src/main.rs` (imports), `tests/error_mapping.rs`
   - **Do:** `ApiError { code, message, details, request_id }` covering the Appendix B codes; one `status()`; `type` strings; `IntoResponse`; replace plain-text errors; unknown `/v1/*` → `ENDPOINT_NOT_SUPPORTED`.
   - **Done when:** a table-driven test covers every Appendix B code; chat errors are JSON envelopes.
 
@@ -321,7 +321,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
 | 3 | Compositional scenario | `cargo test --test acceptance g1_compositional` | pass | REQ-TST-014 |
 | 4 | Invariant scan | `scripts/check-invariants.sh` | pass **and** `invariants-baseline.txt` is empty | REQ-CI-008 |
 | 5 | Repository hygiene | `git ls-files` checks from T1.1/T1.2 | pass | REQ-REPO-001, REQ-REPO-002, REQ-REPO-003 |
-| 6 | Tests not weakened | `git diff <G0 commit> -- tests/ '**/snapshots/**'` | no assertion or expected-value changes | REQ-TST-007 |
+| 6 | Tests not weakened | `git diff <G0 commit> -- tests/ '**/snapshots/**'` | every changed assertion, expected value, or snapshot sits in a commit that states why and carries a `Protected-change:` trailer; the operator approves the list in `evidence/G1.md` (CR-8) | REQ-TST-007 |
 | 7 | Traceability | `spec_lint.py --tests --phase P1` | every P1 MUST AC with `(T)` cited by a passing test | REQ-TST-016 |
 | D1 | Real streaming | binary + fake runtime `slow-stream`; `curl -N` through :8765 with `ts` timestamps | chunks arrive incrementally | REQ-PRX-002 |
 | D2 | Bad config | `saltnitor --config bad.toml; echo $?` | 2 and the full diagnostic | REQ-CFG-003 |
@@ -349,6 +349,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
 - [ ] **T2.1 — Library skeleton**
   - **Reqs:** REQ-ARCH-002, REQ-ARCH-003
   - **Files:** `src/lib.rs`, empty modules `config`, `proxy`, `model`, `telemetry`, `service`, `process`, `tui`, `error`
+  - **Do:** extend `src/lib.rs` (created in T1.8, CR-7) with the empty modules listed in Files.
   - **Done when:** it builds and every test passes.
 
 - [ ] **T2.2 — Extract configuration**

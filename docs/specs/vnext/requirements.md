@@ -1,6 +1,6 @@
 # Saltnitor vNext — Requirements Specification
 
-> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.4 · **Date:** 2026-09-29
+> **Spec:** `saltnitor-vnext` · **File:** `requirements.md` · **Revision:** r2.5 · **Date:** 2026-10-09
 > **Baseline code:** `saltless-bruh/saltnitor` @ `c89f278` (`master`) · **Work branch:** `vnext`
 > **Sources:** **[BP]** `SALTNITOR_VNEXT_BLUEPRINT.md` · **[TP]** *Technical Proposal — Saltnitor Qwen MoE Runtime, Tuning Laboratory, and Remote Agent Server*
 > **Companion:** `tasks.md` — the work queue. This file is the contract every task is checked against.
@@ -701,7 +701,7 @@ Each requirement: header `REQ-ID — Title`, a meta line (priority · verificati
 
 #### REQ-ARCH-002 — Library crate
 > MUST · Verify: I · Phase: P2 · Tasks: T2.1
-- **AC1** `src/lib.rs` SHALL expose the modules that integration tests use. (I)
+- **AC1** `src/lib.rs` SHALL expose the modules that integration tests use (created in T1.8, extended in T2.1 — CR-7). (I)
 
 #### REQ-ARCH-003 — Separation of responsibility
 > MUST · Verify: I · Phase: P2 · Tasks: T2.1, T2.2, T2.3, T2.4, T2.5, T2.6, T2.7 · Src: BP §7
@@ -1768,3 +1768,4 @@ Server-level flags (`--host`, `--port`, `--api-key`, `--models-max`, `--no-model
 | r2.2 | 2026-09-28 | CR-1…CR-3 approved (Phase 0 design): `vnext` CI trigger in T0.1; R0 record/replay in T0.4 and R1 `scripts/real-check.sh` in T0.10 with captures under `tests/fixtures/captures/`; branch protection = full on `master`, force-push/deletion guard on `vnext`, protected-path changes listed per gate. REQ-TST-012/AC1 wording unchanged. |
 | r2.3 | 2026-09-29 | CR-5 approved: BD-33 (decimal size tokens) and BD-34 (`Q4_0`/`Q4_1` bpw) added to §5, both fixed by REQ-ORC-001. CR-4 approved (spec_lint self-test seeds on the first unticked task). CR-1 addendum approved (CI runs `cargo test --workspace`). T0.3 wording follows the register size. |
 | r2.4 | 2026-09-29 | CR-6 approved: REQ-MIG-002/AC3 amended — known-defect behavior may be pinned only by tests named `pins_bd<nn>_…` that say they pin rather than endorse, and that the fixing task rewrites (resolves the AC1/AC3 conflict for BD-28/BD-29). |
+| r2.5 | 2026-10-09 | CR-7: REQ-ARCH-002/AC1 wording; T1.0 Done-when; T1.8 Files; T2.1 Do. CR-8: G1 row 6 pass condition. No IDs added or retired. |
