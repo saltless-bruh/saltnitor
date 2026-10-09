@@ -24,8 +24,22 @@ tokio-stream = "0.1"    # ReceiverStream + StreamExt for the /v1/ensure/stream S
 [workspace]
 members = ["tools/fake-llama-server"]
 
+# REQ-CI-007: placeholders are deny-level everywhere; unwrap/expect are denied in non-test code.
+[workspace.lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+unwrap_used = "deny"
+expect_used = "warn"
+
+[lints]
+workspace = true
+
+[features]
+hardware-tests = []   # REQ-CI-002: GPU / real-runtime tests sit behind this + #[ignore]
+
 [dev-dependencies]
-fake-llama-server = { path = "tools/fake-llama-server" }
+fake-llama-server = { path = "tools/fake-llama-server", version = "0.0.0" }
 insta = "1.48.0"
 portable-pty = "0.9.0"
 proptest = "1.5"

@@ -1,0 +1,77 @@
+name: CI
+on:
+  push: { branches: [master, vnext] }
+  pull_request: { branches: [master, vnext] }
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env: { CARGO_TERM_COLOR: always, CARGO_INCREMENTAL: "0" }
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with: { components: rustfmt }
+      - run: cargo fmt --all --check   # Verifies: REQ-CI-001/AC1
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with: { components: clippy }
+      - uses: Swatinem/rust-cache@v2
+      # Verifies: REQ-CI-001/AC1, REQ-CI-007/AC1, REQ-DOC-006/AC2 (placeholder lints are deny-level in Cargo.toml)
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all --locked           # Verifies: REQ-CI-001/AC1, REQ-CI-003/AC1 (protocol tests run against the fake runtime)
+      - run: scripts/check-test-counts.sh        # Verifies: REQ-CI-005/AC1
+      - run: cargo test --workspace --locked --features hardware-tests --no-run   # Verifies: REQ-CI-002/AC1 (compiles, never runs ignored HW tests)
+
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked      # Verifies: REQ-CI-001/AC1
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0      # Verifies: REQ-REPO-008/AC1 (rust-version in Cargo.toml)
+      - run: cargo build --locked
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2  # Verifies: REQ-CI-006/AC1, REQ-ARCH-008/AC1
+        with: { command: check }
+
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 docs/specs/vnext/tools/spec_lint.py            # Verifies: REQ-DOC-006/AC2
+      - run: python3 -m unittest discover -s docs/specs/vnext/tools
+
+  acceptance:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # informational until G1 (T1.0 Do)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --test acceptance --locked

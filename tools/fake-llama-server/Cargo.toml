@@ -5,6 +5,12 @@ edition = "2024"
 publish = false
 description = "Scenario-driven stand-in for llama-server, for Saltnitor tests only (REQ-TST-011)"
 
+# Test tooling, outside REQ-CI-007's "non-test code": placeholders are denied, unwrap/expect are not.
+[lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1.52.3", features = ["full"] }

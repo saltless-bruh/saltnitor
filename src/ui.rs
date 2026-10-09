@@ -1054,6 +1054,9 @@ fn estimate_vram(model: &str, ctx: i32) -> Option<f64> {
 }
 #[cfg(test)]
 mod tests {
+    // tests may unwrap: a panic is the failure signal (REQ-CI-007 scopes the deny to non-test code)
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::draw;
     use crate::app::App;
     use ratatui::{Terminal, backend::TestBackend};

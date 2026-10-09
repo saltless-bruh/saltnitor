@@ -1,3 +1,9 @@
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "removed by T1.14 (REQ-ERR-004); expect warns once no unwrap remains"
+)]
+
 mod app;
 mod control_api;
 mod events;
@@ -1037,6 +1043,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 #[cfg(test)]
 mod tests {
+    // tests may unwrap: a panic is the failure signal (REQ-CI-007 scopes the deny to non-test code)
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::upsert_ini_section;
 
     fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

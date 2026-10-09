@@ -1,0 +1,2 @@
+# Per-function size is enforced from P2 (REQ-ARCH-001); P1 only records the ceiling.
+too-many-lines-threshold = 100
