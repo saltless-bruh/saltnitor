@@ -222,7 +222,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** jobs for fmt, clippy, test, release build (all `--locked`) on `master`/`vnext`; an MSRV job; deny-level lints; a `hardware-tests` feature; the test-count check; `cargo deny`; `spec_lint.py` plus its self-test; the informational `acceptance` job. Workflow steps that implement a CI requirement carry a `# Verifies:` comment (e.g., `# Verifies: REQ-CI-003/AC1` on the protocol-test step, `# Verifies: REQ-DOC-006/AC2` on the lint step).
   - **Done when:** CI is green on `vnext`, and a scratch branch with `todo!()` fails CI (record the run URL).
 
-- [ ] **T1.4 — Release pipeline** `[P]`
+- [x] **T1.4 — Release pipeline** `[P]`
   - **Reqs:** REQ-CI-004
   - **Depends:** T1.1
   - **Files:** `.github/workflows/release.yml`

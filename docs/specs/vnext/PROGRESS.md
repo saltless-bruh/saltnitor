@@ -23,3 +23,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-10-09 · T1.1 · 22e918c · DONE · Cargo.lock tracked (BD-08 fixed); rust-version 1.95; toolchain pinned
 2026-10-09 · T1.2 · ff13456 · DONE · untracked local artefacts, dropped legacy.zip (all 4 files matched history), CONTRIBUTING rename, SECURITY/CHANGELOG stubs
 2026-10-09 · T1.3 · 9689c57 · DONE · fmt+clippy clean (~30 clippy errors, not the 11 in baseline; cargo fix + manual), ci.yml replaces rust.yml, deny/test-count gates; todo!() probe failed CI: https://github.com/saltless-bruh/saltnitor/actions/runs/37879968092
+2026-10-09 · T1.4 · 85f8b80 · DONE · release.yml: locked build, SHA256SUMS, attestation, gh release upload; dry run https://github.com/saltless-bruh/saltnitor/actions/runs/37880510590 (first push had flow-mapping YAML error, fixed)
