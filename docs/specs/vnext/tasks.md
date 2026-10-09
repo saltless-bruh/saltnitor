@@ -250,7 +250,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** add `--config`; XDG resolution, logged; drop the `SUDO_USER` redirection. Parse with `deny_unknown_fields` and a path-aware deserializer (e.g., `serde_path_to_error` plus the TOML span) to print `file:line:col`, the key path, expected, and found. Accept `schema_version = 1`. Validate before any listener or task starts.
   - **Done when:** `cargo test --test config_strict` covers REQ-CFG-003/AC1–AC3 (runs the binary; asserts the port is free), unknown key, missing `--config` file, and missing default file.
 
-- [ ] **T1.8 — Error envelope and mapping** · *test-first*
+- [x] **T1.8 — Error envelope and mapping** · *test-first*
   - **Reqs:** REQ-ERR-001, REQ-ERR-002, REQ-ERR-003, REQ-PRX-020
   - **Depends:** T1.3
   - **Files:** `src/error.rs` (new), `src/lib.rs` (new, CR-7), `src/control_api.rs`, `src/main.rs` (imports), `tests/error_mapping.rs`

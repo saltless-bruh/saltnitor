@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
+use crate::error::{ApiError, ErrorCode};
 use crate::events::Event;
 
 // ───────────────────────── profile metadata (oracle only) ─────────────────────────
@@ -399,24 +400,29 @@ fn auth_ok(api: &ControlApi, headers: &HeaderMap) -> bool {
     }
 }
 
+/// 507 `ORACLE_REJECTED` with the numbers that caused it in `details` (REQ-ERR-001).
+fn oracle_rejected(msg: String, i: &OomInfo) -> ApiError {
+    ApiError::new(ErrorCode::OracleRejected, msg).details(serde_json::json!({
+        "need_vram_gb": i.need_vram_gb,
+        "total_vram_gb": i.total_vram_gb,
+        "need_ram_gb": i.need_ram_gb,
+        "total_ram_gb": i.total_ram_gb,
+    }))
+}
+
+fn auth_required() -> ApiError {
+    ApiError::new(ErrorCode::AuthRequired, "missing or invalid credentials")
+}
+
 async fn h_ensure(
     State(api): State<Arc<ControlApi>>,
     headers: HeaderMap,
     Json(req): Json<EnsureRequest>,
-) -> (StatusCode, Json<EnsureResponse>) {
+) -> axum::response::Response {
     if !auth_ok(&api, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(EnsureResponse {
-                status: "error".into(),
-                model: String::new(),
-                endpoint: api.infer_endpoint(),
-                load_ms: None,
-                vram_estimate_gb: None,
-                detail: Some("bad token".into()),
-            }),
-        );
+        return auth_required().into_response();
     }
+    let profile = req.profile.clone();
     match api.ensure(req, &ProgressSink::None).await {
         EnsureOutcome::Loaded {
             model,
@@ -433,7 +439,8 @@ async fn h_ensure(
                 vram_estimate_gb,
                 detail: None,
             }),
-        ),
+        )
+            .into_response(),
         EnsureOutcome::AlreadyResident { model, endpoint } => (
             StatusCode::OK,
             Json(EnsureResponse {
@@ -444,43 +451,25 @@ async fn h_ensure(
                 vram_estimate_gb: None,
                 detail: None,
             }),
-        ),
-        EnsureOutcome::Oom(i) => (
-            StatusCode::INSUFFICIENT_STORAGE,
-            Json(EnsureResponse {
-                status: "oom_rejected".into(),
-                model: String::new(),
-                endpoint: api.infer_endpoint(),
-                load_ms: None,
-                vram_estimate_gb: Some(i.need_vram_gb),
-                detail: Some(format!(
-                    "need ~{:.1}GB VRAM (have {:.1}) / ~{:.1}GB RAM (have {:.1})",
-                    i.need_vram_gb, i.total_vram_gb, i.need_ram_gb, i.total_ram_gb
-                )),
-            }),
-        ),
-        EnsureOutcome::Bad(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(EnsureResponse {
-                status: "bad_request".into(),
-                model: String::new(),
-                endpoint: api.infer_endpoint(),
-                load_ms: None,
-                vram_estimate_gb: None,
-                detail: Some(e),
-            }),
-        ),
-        EnsureOutcome::Err(e) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(EnsureResponse {
-                status: "error".into(),
-                model: String::new(),
-                endpoint: api.infer_endpoint(),
-                load_ms: None,
-                vram_estimate_gb: None,
-                detail: Some(e),
-            }),
-        ),
+        )
+            .into_response(),
+        EnsureOutcome::Oom(i) => oracle_rejected(
+            format!(
+                "need ~{:.1}GB VRAM (have {:.1}) / ~{:.1}GB RAM (have {:.1})",
+                i.need_vram_gb, i.total_vram_gb, i.need_ram_gb, i.total_ram_gb
+            ),
+            &i,
+        )
+        .into_response(),
+        EnsureOutcome::Bad(e) => ApiError::new(
+            ErrorCode::ModelNotFound,
+            format!("unknown model '{profile}': {e}"),
+        )
+        .into_response(),
+        EnsureOutcome::Err(e) => {
+            ApiError::new(ErrorCode::RuntimeStartFailed, format!("load failed: {e}"))
+                .into_response()
+        }
     }
 }
 
@@ -494,7 +483,7 @@ async fn h_ensure_stream(
         Some(t) => req.token.as_deref() == Some(t.as_str()),
     };
     if !auth_ok(&api, &headers) && !token_ok {
-        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+        return auth_required().into_response();
     }
     let (ptx, prx) = mpsc::channel::<Stage>(16);
     let a = api.clone();
@@ -540,20 +529,42 @@ async fn h_chat(State(api): State<Arc<ControlApi>>, body: Bytes) -> axum::respon
         .ok()
         .and_then(|v| v.get("model").and_then(|m| m.as_str()).map(str::to_string));
     let Some(model) = model else {
-        return (StatusCode::BAD_REQUEST, "missing 'model' in request body").into_response();
+        return ApiError::new(ErrorCode::RequestInvalid, "missing 'model' in request body")
+            .into_response();
     };
 
     // make it resident before forwarding. Idempotent: AlreadyResident is the fast path.
-    match api.ensure(EnsureRequest { profile: model.clone(), ..Default::default() },
-                     &ProgressSink::None).await {
-        EnsureOutcome::Bad(e) =>
-            return (StatusCode::NOT_FOUND, format!("unknown model '{}': {}", model, e)).into_response(),
-        EnsureOutcome::Oom(i) =>
-            return (StatusCode::SERVICE_UNAVAILABLE, format!(
-                "saltnitor oracle: '{}' needs ~{:.1}GB VRAM (have {:.1}) / ~{:.1}GB RAM (have {:.1}); refusing to load (would OOM)",
-                model, i.need_vram_gb, i.total_vram_gb, i.need_ram_gb, i.total_ram_gb)).into_response(),
-        EnsureOutcome::Err(e) =>
-            return (StatusCode::BAD_GATEWAY, format!("saltnitor: load failed: {}", e)).into_response(),
+    match api
+        .ensure(
+            EnsureRequest {
+                profile: model.clone(),
+                ..Default::default()
+            },
+            &ProgressSink::None,
+        )
+        .await
+    {
+        EnsureOutcome::Bad(e) => {
+            return ApiError::new(
+                ErrorCode::ModelNotFound,
+                format!("unknown model '{model}': {e}"),
+            )
+            .into_response();
+        }
+        EnsureOutcome::Oom(i) => {
+            return oracle_rejected(
+                format!(
+                    "'{model}' needs ~{:.1}GB VRAM (have {:.1}) / ~{:.1}GB RAM (have {:.1}); refusing to load (would OOM)",
+                    i.need_vram_gb, i.total_vram_gb, i.need_ram_gb, i.total_ram_gb
+                ),
+                &i,
+            )
+            .into_response();
+        }
+        EnsureOutcome::Err(e) => {
+            return ApiError::new(ErrorCode::RuntimeStartFailed, format!("load failed: {e}"))
+                .into_response();
+        }
         _ => {} // Loaded | AlreadyResident -> proceed
     }
 
@@ -583,21 +594,30 @@ async fn h_chat(State(api): State<Arc<ControlApi>>, body: Bytes) -> axum::respon
                     .header("Content-Type", ctype)
                     .body(Body::from(bytes))
                     .unwrap_or_else(|_| {
-                        (StatusCode::BAD_GATEWAY, "proxy build error").into_response()
+                        ApiError::new(ErrorCode::RuntimeUnhealthy, "proxy build error")
+                            .into_response()
                     }),
-                Err(e) => (
-                    StatusCode::BAD_GATEWAY,
-                    format!("router read failed: {}", e),
+                Err(e) => ApiError::new(
+                    ErrorCode::RuntimeUnhealthy,
+                    format!("router read failed: {e}"),
                 )
-                    .into_response(),
+                .into_response(),
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            format!("router unreachable: {}", e),
+        Err(e) => ApiError::new(
+            ErrorCode::RuntimeUnhealthy,
+            format!("router unreachable: {e}"),
         )
-            .into_response(),
+        .into_response(),
     }
+}
+
+/// Any path no route claims: `/v1/*` endpoints we do not implement, and everything else (REQ-PRX-020).
+async fn h_not_supported(uri: axum::http::Uri) -> ApiError {
+    ApiError::new(
+        ErrorCode::EndpointNotSupported,
+        format!("{} is not supported", uri.path()),
+    )
 }
 
 /// Spawn from main.rs: `tokio::spawn(control_api::serve(api, addr));`
@@ -609,6 +629,7 @@ pub async fn serve(api: Arc<ControlApi>, addr: std::net::SocketAddr) {
         .route("/v1/models", get(h_models))
         .route("/v1/chat/completions", post(h_chat))
         .route("/healthz", get(h_health))
+        .fallback(h_not_supported)
         .with_state(api);
     match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => {
@@ -1100,39 +1121,39 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
     #[tokio::test]
-    async fn ensure_unknown_profile_is_400() {
+    async fn ensure_unknown_profile_is_404_envelope() {
         let r = rig(scenario("control-api-legacy.toml"), &[("A", fits())], None).await;
         let (s, v) = r.post_json("/v1/ensure", json!({"profile": "Z"})).await;
+        assert_eq!(s, 404);
+        assert_eq!(v["error"]["code"], "MODEL_NOT_FOUND");
         assert_eq!(
-            (s, v),
-            (
-                400,
-                json!({"status": "bad_request", "model": "", "endpoint": r.endpoint(), "detail": "unknown profile 'Z'"})
-            )
+            v["error"]["message"],
+            "unknown model 'Z': unknown profile 'Z'"
         );
     }
 
-    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-MIG-007/AC2
+    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-007/AC2, REQ-ERR-001/AC1
     #[tokio::test]
-    async fn pins_bd29_ensure_oracle_reject_is_507_json() {
-        // Known defect BD-29 (507 here vs 503 on chat) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
-        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
-
+    async fn ensure_oracle_reject_is_507_envelope() {
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("B", never_fits())],
             None,
         )
         .await;
-        let (s, v) = r.post_json("/v1/ensure", json!({"profile": "B"})).await;
-        assert_eq!(s, 507);
-        assert_eq!(
-            (v["status"].as_str(), v["model"].as_str()),
-            (Some("oom_rejected"), Some(""))
-        );
-        assert_eq!(v["vram_estimate_gb"], json!(1.0e6));
+        let http = r
+            .http
+            .post(r.url("/v1/ensure"))
+            .json(&json!({"profile": "B"}));
+        let resp = http.send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 507);
+        assert_eq!(resp.headers()["content-type"], "application/json");
+        let v: Value = resp.json().await.unwrap();
+        assert_eq!(v["error"]["code"], "ORACLE_REJECTED");
+        assert_eq!(v["error"]["type"], "server_error");
+        assert_eq!(v["error"]["details"]["need_vram_gb"], json!(1.0e6));
         assert!(
-            v["detail"]
+            v["error"]["message"]
                 .as_str()
                 .unwrap()
                 .starts_with("need ~1000000.0GB VRAM (have "),
@@ -1159,7 +1180,7 @@ mod tests {
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
     #[tokio::test]
-    async fn ensure_reports_router_failure_as_503() {
+    async fn ensure_reports_router_failure_as_502_envelope() {
         let sc = scenario("control-api-legacy.toml").with_fault(
             "POST /v1/chat/completions",
             Fault::Status {
@@ -1169,11 +1190,11 @@ mod tests {
         );
         let r = rig(sc, &[("B", fits())], None).await;
         let (s, v) = r.post_json("/v1/ensure", json!({"profile": "B"})).await;
-        assert_eq!(s, 503);
-        assert_eq!(v["status"], "error");
+        assert_eq!(s, 502);
+        assert_eq!(v["error"]["code"], "RUNTIME_START_FAILED");
         assert_eq!(
-            v["detail"],
-            "router load failed: router returned 500 Internal Server Error"
+            v["error"]["message"],
+            "load failed: router load failed: router returned 500 Internal Server Error"
         );
     }
 
@@ -1187,13 +1208,9 @@ mod tests {
         )
         .await;
         let (s, v) = r.post_json("/v1/ensure", json!({"profile": "A"})).await;
-        assert_eq!(
-            (s, v),
-            (
-                401,
-                json!({"status": "error", "model": "", "endpoint": r.endpoint(), "detail": "bad token"})
-            )
-        );
+        assert_eq!(s, 401);
+        assert_eq!(v["error"]["code"], "AUTH_REQUIRED");
+        assert_eq!(v["error"]["type"], "authentication_error");
         let ok = r
             .http
             .post(r.url("/v1/ensure"))
@@ -1248,10 +1265,10 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert_eq!(
-            (bad.status().as_u16(), bad.text().await.unwrap()),
-            (401, "bad token".to_string())
-        );
+        assert_eq!(bad.status().as_u16(), 401);
+        assert_eq!(bad.headers()["content-type"], "application/json");
+        let v: Value = bad.json().await.unwrap();
+        assert_eq!(v["error"]["code"], "AUTH_REQUIRED");
     }
 
     /// BD-04 evidence probe — the query token is always accepted; measured, not asserted (REQ-MIG-002/AC3).
@@ -1308,23 +1325,26 @@ mod tests {
         assert_eq!(r.fake.loaded(), vec!["B"]);
     }
 
-    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    /// Verifies: REQ-ERR-001/AC1, REQ-MIG-002/AC1
     #[tokio::test]
-    async fn pins_bd29_chat_errors_are_plain_text() {
-        // Known defect BD-29 (plain-text chat errors) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
-        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
-
+    async fn chat_errors_are_json_envelopes() {
         let r = rig(scenario("control-api-legacy.toml"), &[("A", fits())], None).await;
-        let (s, _, text) = r
+        let (s, ct, text) = r
             .post_raw("/v1/chat/completions", r#"{"messages":[]}"#)
             .await;
-        assert_eq!((s, text.as_str()), (400, "missing 'model' in request body"));
-        let (s, _, text) = r
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!((s, ct.as_str()), (400, "application/json"));
+        assert_eq!(v["error"]["code"], "REQUEST_INVALID");
+        assert_eq!(v["error"]["message"], "missing 'model' in request body");
+        let (s, ct, text) = r
             .post_raw("/v1/chat/completions", r#"{"model":"Z","messages":[]}"#)
             .await;
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!((s, ct.as_str()), (404, "application/json"));
+        assert_eq!(v["error"]["code"], "MODEL_NOT_FOUND");
         assert_eq!(
-            (s, text.as_str()),
-            (404, "unknown model 'Z': unknown profile 'Z'")
+            v["error"]["message"],
+            "unknown model 'Z': unknown profile 'Z'"
         );
     }
 
@@ -1348,12 +1368,9 @@ mod tests {
         );
     }
 
-    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2
+    /// Verifies: REQ-ERR-001/AC1, REQ-MIG-002/AC1
     #[tokio::test]
-    async fn pins_bd29_chat_oracle_reject_is_503_plain_text() {
-        // Known defect BD-29 (503 here vs 507 on ensure) (baseline/DEFECTS.md): pinned so a fix shows up as a deliberate
-        // snapshot change, not endorsed as correct (REQ-MIG-002/AC3).
-
+    async fn chat_oracle_reject_is_507_envelope() {
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("B", never_fits())],
@@ -1363,10 +1380,16 @@ mod tests {
         let (s, _, text) = r
             .post_raw("/v1/chat/completions", r#"{"model":"B","messages":[]}"#)
             .await;
-        assert_eq!(s, 503);
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(s, 507);
+        assert_eq!(v["error"]["code"], "ORACLE_REJECTED");
+        assert_eq!(v["error"]["details"]["need_vram_gb"], json!(1.0e6));
         assert!(
-            text.starts_with("saltnitor oracle: 'B' needs ~1000000.0GB VRAM"),
-            "{text}"
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("'B' needs ~1000000.0GB VRAM"),
+            "{v}"
         );
     }
 
@@ -1429,11 +1452,9 @@ mod tests {
         );
     }
 
-    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
+    /// Verifies: REQ-ERR-001/AC1, REQ-MIG-002/AC1, REQ-TST-002/AC1
     #[tokio::test]
-    async fn pins_bd29_chat_load_failure_is_502_plain_text() {
-        // Known defect BD-29 (plain-text chat errors): pinned so a fix shows up as a deliberate
-        // change, not endorsed as correct (REQ-MIG-002/AC3).
+    async fn chat_load_failure_is_502_envelope() {
         let sc = scenario("control-api-legacy.toml").with_fault(
             "POST /v1/chat/completions",
             Fault::Status {
@@ -1445,27 +1466,45 @@ mod tests {
         let (s, ct, text) = r
             .post_raw("/v1/chat/completions", r#"{"model":"B","messages":[]}"#)
             .await;
-        assert_eq!(
-            (s, ct.as_str(), text.as_str()),
-            (
-                502,
-                "text/plain; charset=utf-8",
-                "saltnitor: load failed: router load failed: router returned 500 Internal Server Error"
-            )
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!((s, ct.as_str()), (502, "application/json"));
+        assert_eq!(v["error"]["code"], "RUNTIME_START_FAILED");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("router returned 500"),
+            "{v}"
         );
     }
 
-    /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-TST-002/AC1
+    /// Verifies: REQ-ERR-001/AC1, REQ-MIG-002/AC1, REQ-TST-002/AC1
     #[tokio::test]
-    async fn pins_bd29_chat_upstream_body_failure_is_502_plain_text() {
-        // Known defect BD-29 (plain-text chat errors): pinned, not endorsed (REQ-MIG-002/AC3).
+    async fn chat_upstream_failure_is_502_envelope() {
         let sc = scenario("control-api-legacy.toml")
             .with_fault("POST /v1/chat/completions", Fault::CrashAfter { chunks: 0 });
         let r = rig(sc, &[("A", fits())], None).await;
-        let (s, _, text) = r
+        let (s, ct, text) = r
             .post_raw("/v1/chat/completions", r#"{"model":"A","messages":[]}"#)
             .await;
-        assert_eq!(s, 502);
-        assert!(text.starts_with("router read failed: "), "{text}");
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!((s, ct.as_str()), (502, "application/json"));
+        assert_eq!(v["error"]["code"], "RUNTIME_UNHEALTHY");
+    }
+
+    /// Verifies: REQ-PRX-020/AC1
+    #[tokio::test]
+    async fn unknown_v1_path_is_404_endpoint_not_supported() {
+        let r = rig(scenario("control-api-legacy.toml"), &[("A", fits())], None).await;
+        let resp = r.http.get(r.url("/v1/embeddings")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!(resp.headers()["content-type"], "application/json");
+        let v: Value = resp.json().await.unwrap();
+        assert_eq!(v["error"]["code"], "ENDPOINT_NOT_SUPPORTED");
+        let resp = r.http.post(r.url("/nope")).send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 404);
+        assert_eq!(resp.headers()["content-type"], "application/json");
+        let v: Value = resp.json().await.unwrap();
+        assert_eq!(v["error"]["code"], "ENDPOINT_NOT_SUPPORTED");
     }
 }

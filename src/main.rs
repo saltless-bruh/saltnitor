@@ -4,12 +4,6 @@
     reason = "removed by T1.14 (REQ-ERR-004); expect warns once no unwrap remains"
 )]
 
-mod app;
-mod config_v1;
-mod control_api;
-mod events;
-mod ui;
-
 use app::App;
 use clap::Parser;
 use crossterm::{
@@ -20,6 +14,7 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use reqwest::Client;
+use saltnitor::{app, config_v1, control_api, events, ui};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;

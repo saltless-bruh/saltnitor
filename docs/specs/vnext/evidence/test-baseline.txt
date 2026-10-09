@@ -4,4 +4,5 @@ fake_llama_server unittests src/main.rs	1
 http tests/http.rs	19
 process tests/process.rs	7
 record tests/record.rs	6
-saltnitor unittests src/main.rs	38
+saltnitor unittests src/lib.rs	44
+saltnitor unittests src/main.rs	6
