@@ -22,3 +22,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-10-09 · T1.0 · f5febd7 · DONE · 15 tests, red for missing auth middleware/envelope (BD-03/04), buffered proxy (BD-02), config fallback to defaults (BD-01), no cancellation propagation, no saltnitor::process API (g1_process does not compile); approval = PR review
 2026-10-09 · T1.1 · 22e918c · DONE · Cargo.lock tracked (BD-08 fixed); rust-version 1.95; toolchain pinned
 2026-10-09 · T1.2 · ff13456 · DONE · untracked local artefacts, dropped legacy.zip (all 4 files matched history), CONTRIBUTING rename, SECURITY/CHANGELOG stubs
+2026-10-09 · T1.3 · 9689c57 · DONE · fmt+clippy clean (~30 clippy errors, not the 11 in baseline; cargo fix + manual), ci.yml replaces rust.yml, deny/test-count gates; todo!() probe failed CI: https://github.com/saltless-bruh/saltnitor/actions/runs/37879968092

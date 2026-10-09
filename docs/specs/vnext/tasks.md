@@ -215,7 +215,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** `git rm` `.saltnitor_history`, `crash_dump_20260511_163653.txt`, and `.vscode/`. For `legacy.zip`: unzip it to a temp dir and diff against history (`git log --all -p -- src/`). If there is unique source, ask the operator, then tag `legacy-archive`. Then remove the zip. Extend `.gitignore`; rename the contributing guide; add stub SECURITY/CHANGELOG.
   - **Done when:** `git ls-files | grep -E 'saltnitor_history|crash_dump_|legacy\.zip|\.vscode/'` is empty, and the legacy decision is in `CHANGELOG.md`.
 
-- [ ] **T1.3 — CI pipeline**
+- [x] **T1.3 — CI pipeline**
   - **Reqs:** REQ-CI-001, REQ-CI-002, REQ-CI-003, REQ-CI-005, REQ-CI-006, REQ-CI-007, REQ-DOC-006, REQ-ARCH-008, REQ-REPO-008
   - **Depends:** T1.1, T0.9
   - **Files:** `.github/workflows/ci.yml`, `Cargo.toml` `[lints.clippy]`, `clippy.toml`, `deny.toml`, `scripts/check-test-counts.sh`
