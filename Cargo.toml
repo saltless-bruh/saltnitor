@@ -26,3 +26,11 @@ members = ["tools/fake-llama-server"]
 [dev-dependencies]
 fake-llama-server = { path = "tools/fake-llama-server" }
 insta = "1.48.0"
+portable-pty = "0.9.0"
+proptest = "1.5"
+
+# G1+ acceptance suite (REQ-TST-012, CR-7): one target, black-box, never part of `cargo test`.
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+test = false
