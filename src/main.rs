@@ -14,7 +14,7 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use reqwest::Client;
-use saltnitor::{app, auth, config_v1, control_api, events, proxy_stream, ui};
+use saltnitor::{app, auth, config_v1, control_api, events, process, proxy_stream, ui};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -61,9 +61,46 @@ fn profile_metas(cfg: &config_v1::ConfigV1) -> HashMap<String, control_api::Prof
         .collect()
 }
 
+// --- Process control (REQ-PROC-003, REQ-TUI-010): exact PIDs, results come back as log lines ---
+
+/// SIGTERM the selected PID on a blocking thread; the outcome arrives as a `LogLine`.
+fn start_terminate(app: &mut App, info: &process::ProcessInfo, tx: &mpsc::Sender<Event>) {
+    let target = process::Target::select(info);
+    let (svc, grace_ms) = (app.service_name.clone(), app.term_grace_ms);
+    let tx = tx.clone();
+    app.add_log(format!(
+        ">>> PROCESS: SIGTERM {} ({}) requested",
+        info.pid, info.name
+    ));
+    tokio::task::spawn_blocking(move || {
+        let guard = process::Guard::current(process::runtime_tree(&svc));
+        let result = process::terminate_guarded(&target, &guard, Duration::from_millis(grace_ms));
+        let _ = tx.blocking_send(Event::LogLine(process::describe_terminate(
+            &target, &result, grace_ms,
+        )));
+    });
+}
+
+/// Arm the SIGKILL confirmation for the selected PID.
+fn ask_kill(app: &mut App, info: &process::ProcessInfo) {
+    app.confirm_line = Some(format!("SIGKILL {} ({})? [y/N]", info.pid, info.name));
+    app.pending_kill = Some(process::Target::select(info));
+}
+
+/// The operator pressed `y`: SIGKILL the pinned target on a blocking thread.
+fn confirm_kill(app: &mut App, target: process::Target, tx: &mpsc::Sender<Event>) {
+    let svc = app.service_name.clone();
+    let tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let guard = process::Guard::current(process::runtime_tree(&svc));
+        let result = process::kill_guarded(&target, &guard);
+        let _ = tx.blocking_send(Event::LogLine(process::describe_kill(&target, &result)));
+    });
+}
+
 // --- Pre-Flight Dependency Checker ---
 fn check_dependencies() -> Result<(), String> {
-    let required_cmds = ["journalctl", "ss", "systemctl", "killall"];
+    let required_cmds = ["journalctl", "ss", "systemctl"];
     let mut missing = Vec::new();
 
     for cmd in required_cmds {
@@ -244,6 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_ctx,
     );
     app.router_ini = toml_conf.router_ini.clone();
+    app.term_grace_ms = toml_conf.process.term_grace_ms;
     app.client_bearer = config_v1::client_bearer(toml_conf.client_key_env.as_deref());
     app.redactor = auth::Redactor::new(
         [
@@ -324,6 +362,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_processes(ProcessRefreshKind::everything()),
         );
 
+        let mut poll_count: u32 = 0;
         loop {
             tokio::time::sleep(Duration::from_millis(1000)).await;
             sys.refresh_cpu_specifics(CpuRefreshKind::everything());
@@ -343,25 +382,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cpu_cores: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
             let cpu_load = cpu_cores.iter().sum::<f32>() / cpu_cores.len() as f32;
 
-            // Top System RAM Culprits (Showing ALL processes > 1MB, Deduplicated)
-            let mut procs: Vec<_> = sys.processes().values().collect();
-            procs.sort_by_key(|p| std::cmp::Reverse(p.memory())); // Sort by memory descending first
-
-            let mut seen_names = std::collections::HashSet::new();
-            let sys_processes: Vec<(String, f64)> = procs
-                .iter()
-                .filter(|p| p.memory() > 1_048_576) // Filter out tiny < 1MB threads
-                .filter_map(|p| {
-                    let name = p.name().to_string_lossy().to_string();
-                    // HashSet.insert() returns true only if the name has never been seen before
-                    if seen_names.insert(name.clone()) {
-                        Some((name, p.memory() as f64 / 1_073_741_824.0))
-                    } else {
-                        None // Silently drop the ghost thread
-                    }
-                })
-                .collect();
-
+            // One row per PID (BD-05): names are never a key.
+            let raw = process::snapshot_from_sysinfo(&sys);
             // NVIDIA Metrics (General)
             let mut vram_used = 0.0;
             let mut gpu_temp = 0;
@@ -391,30 +413,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            // NVIDIA Metrics (Processes)
-            let mut gpu_processes: Vec<(String, f64)> = Vec::new();
+            // NVIDIA Metrics (Processes): exact PIDs, merged into the table
+            let mut gpu_apps = Vec::new();
             if has_nvidia
                 && let Ok(output) = std::process::Command::new("nvidia-smi")
                     .args([
-                        "--query-compute-apps=process_name,used_memory",
+                        "--query-compute-apps=pid,process_name,used_memory",
                         "--format=csv,noheader,nounits",
                     ])
                     .output()
             {
-                let out = String::from_utf8_lossy(&output.stdout);
-                for line in out.lines() {
-                    let parts: Vec<&str> = line.split(", ").collect();
-                    if parts.len() == 2 {
-                        let name = parts[0]
-                            .split('/')
-                            .next_back()
-                            .unwrap_or(parts[0])
-                            .to_string(); // Get just the exe name
-                        let mem = parts[1].parse::<f64>().unwrap_or(0.0) / 1024.0;
-                        gpu_processes.push((name, mem));
-                    }
-                }
+                gpu_apps = process::parse_compute_apps(&String::from_utf8_lossy(&output.stdout));
             }
+            let processes = process::table(raw, &gpu_apps);
+
+            // uid → user name, refreshed on the first poll and every 30th after it
+            let users = if poll_count.is_multiple_of(30) {
+                sysinfo::Users::new_with_refreshed_list()
+                    .iter()
+                    .map(|u| (**u.id(), u.name().to_string()))
+                    .collect()
+            } else {
+                HashMap::new()
+            };
+            poll_count = poll_count.wrapping_add(1);
 
             let _ = tx_hw
                 .send(Event::HardwareUpdate {
@@ -423,11 +445,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cpu_load: cpu_load as u64,
                     gpu_temp,
                     gpu_power,
-                    gpu_processes,
                     cpu_cores,
                     swap_used,
                     swap_total,
-                    sys_processes,
+                    processes,
+                    users,
                     gpu_util,
                     vram_util,
                     gpu_fan,
@@ -537,7 +559,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(event) = rx.recv() => {
                 match event {
                     Event::Key(key) => {
-                        if app.show_gpu_inspector {
+                        if let Some(target) = app.pending_kill.take() {
+                            // --- SIGKILL confirmation: only `y` proceeds (REQ-PROC-003/AC2) ---
+                            app.confirm_line = None;
+                            if key.code == KeyCode::Char('y') { confirm_kill(&mut app, target, &tx); }
+                            else { app.add_log(">>> PROCESS: kill cancelled".to_string()); }
+                        } else if app.show_gpu_inspector {
                             // --- PROCESS SNIPER (GPU) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => app.show_gpu_inspector = false,
@@ -550,15 +577,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.gpu_proc_state.select(Some(i));
                                 }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some(i) = app.gpu_proc_state.selected()
-                                        && let Some((name, _)) = app.gpu_processes.get(i) {
-                                            let proc_name = name.clone();
-                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
-                                            else {
-                                                app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                                tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
-                                            }
-                                        }
+                                    let sel = app.gpu_proc_state.selected().and_then(|i| app.gpu_processes.get(i)).cloned();
+                                    if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
+                                }
+                                KeyCode::Char('X') => {
+                                    let sel = app.gpu_proc_state.selected().and_then(|i| app.gpu_processes.get(i)).cloned();
+                                    if let Some(info) = sel { ask_kill(&mut app, &info); }
                                 }
                                 _ => {}
                             }
@@ -575,15 +599,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.sys_proc_state.select(Some(i));
                                 }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some(i) = app.sys_proc_state.selected()
-                                        && let Some((name, _)) = app.sys_processes.get(i) {
-                                            let proc_name = name.clone();
-                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
-                                            else {
-                                                app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
-                                                tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
-                                            }
-                                        }
+                                    let sel = app.sys_proc_state.selected().and_then(|i| app.sys_processes.get(i)).cloned();
+                                    if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
+                                }
+                                KeyCode::Char('X') => {
+                                    let sel = app.sys_proc_state.selected().and_then(|i| app.sys_processes.get(i)).cloned();
+                                    if let Some(info) = sel { ask_kill(&mut app, &info); }
                                 }
                                 _ => {}
                             }
@@ -920,7 +941,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc]).output().await; });
                                 }
                                 KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    // Kill-switch must STOP the unit. With Restart=always a bare killall is
+                                    // Kill-switch must STOP the unit. With Restart=always a bare SIGKILL is
                                     // respawned in ~2s and VRAM never frees; stopping the unit wins and stays down.
                                     let svc = app.service_name.clone();
                                     app.add_log(">>> TACTICAL KILL-SWITCH: stopping unit (frees VRAM, stays down)...".to_string());
@@ -1005,33 +1026,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Event::PortAudit(status) => {
                         app.port_status = status;
                     }
-                    Event::HardwareUpdate { vram_used, ram_used, cpu_load, gpu_temp, gpu_power, gpu_processes, cpu_cores, swap_used, swap_total, sys_processes, gpu_util, vram_util, gpu_fan, gpu_clocks, sys_uptime } => {
+                    Event::HardwareUpdate { vram_used, ram_used, cpu_load, gpu_temp, gpu_power, cpu_cores, swap_used, swap_total, processes, users, gpu_util, vram_util, gpu_fan, gpu_clocks, sys_uptime } => {
                         app.vram_used = vram_used;
                         app.ram_used = ram_used;
                         app.gpu_temp = gpu_temp;
                         app.gpu_power = gpu_power;
-                        app.gpu_processes = gpu_processes;
                         app.cpu_cores = cpu_cores;
                         app.swap_used = swap_used;
                         app.swap_total = swap_total;
-                        app.sys_processes = sys_processes;
                         app.gpu_util = gpu_util;
                         app.vram_util = vram_util;
                         app.gpu_fan = gpu_fan;
                         app.gpu_clocks = gpu_clocks;
                         app.sys_uptime = sys_uptime;
 
-                        // Clamp GPU State
-                        if let Some(selected) = app.gpu_proc_state.selected() {
-                            if selected >= app.gpu_processes.len() && !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(app.gpu_processes.len() - 1)); }
-                            else if app.gpu_processes.is_empty() { app.gpu_proc_state.select(None); }
-                        } else if !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(0)); }
-
-                        // Clamp Sys State
-                        if let Some(selected) = app.sys_proc_state.selected() {
-                            if selected >= app.sys_processes.len() && !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(app.sys_processes.len() - 1)); }
-                            else if app.sys_processes.is_empty() { app.sys_proc_state.select(None); }
-                        } else if !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(0)); }
+                        app.set_processes(&processes, users);
 
                         if app.cpu_history.len() >= 100 { app.cpu_history.remove(0); }
                         app.cpu_history.push(cpu_load);

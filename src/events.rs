@@ -1,4 +1,6 @@
+use crate::process::ProcessInfo;
 use crossterm::event::KeyEvent;
+use std::collections::HashMap;
 
 /// Defines all possible events that can trigger a state change or render.
 #[derive(Debug)]
@@ -15,11 +17,13 @@ pub enum Event {
         // --- GPU Telemetry ---
         gpu_temp: i32,
         gpu_power: String,
-        gpu_processes: Vec<(String, f64)>, // Name, VRAM (GB)
         cpu_cores: Vec<f32>,
         swap_used: f64,
         swap_total: f64,
-        sys_processes: Vec<(String, f64)>, // Name, RAM (GB)
+        /// One row per PID, GPU memory merged in (REQ-PROC-001/002).
+        processes: Vec<ProcessInfo>,
+        /// uid → user name; empty on polls that did not refresh it.
+        users: HashMap<u32, String>,
         gpu_util: String,
         vram_util: String,
         gpu_fan: String,

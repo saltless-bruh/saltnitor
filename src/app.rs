@@ -1,5 +1,6 @@
+use crate::process::{self, ProcessInfo, Target};
 use ratatui::widgets::ListState;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 pub struct App {
     pub should_quit: bool,
@@ -27,11 +28,13 @@ pub struct App {
     // Deep-Dive Telemetry
     pub gpu_temp: i32,
     pub gpu_power: String,
-    pub gpu_processes: Vec<(String, f64)>,
+    pub gpu_processes: Vec<ProcessInfo>,
     pub cpu_cores: Vec<f32>,
     pub swap_used: f64,
     pub swap_total: f64,
-    pub sys_processes: Vec<(String, f64)>,
+    pub sys_processes: Vec<ProcessInfo>,
+    /// uid → user name for the process rows.
+    pub users: HashMap<u32, String>,
     pub show_gpu_inspector: bool,
     pub show_sys_inspector: bool,
     pub gpu_util: String,
@@ -43,6 +46,12 @@ pub struct App {
     // --- Process Sniper State ---
     pub gpu_proc_state: ListState,
     pub sys_proc_state: ListState,
+    /// SIGKILL awaiting the operator's `y` (REQ-PROC-003/AC2).
+    pub pending_kill: Option<Target>,
+    /// Bottom-line prompt shown while `pending_kill` is set.
+    pub confirm_line: Option<String>,
+    /// `process.term_grace_ms`: how long SIGTERM is awaited before offering SIGKILL.
+    pub term_grace_ms: u64,
 
     // Search State
     pub is_searching: bool,
@@ -223,12 +232,27 @@ impl App {
             swap_used: 0.0,
             swap_total: 1.0,
             sys_processes: Vec::new(),
+            users: HashMap::new(),
+            pending_kill: None,
+            confirm_line: None,
+            term_grace_ms: crate::config_v1::ProcessCfg::default().term_grace_ms,
             sys_uptime: 0,
             gpu_proc_state: ListState::default(),
             sys_proc_state: ListState::default(),
             show_gpu_inspector: false,
             show_sys_inspector: false,
         }
+    }
+
+    /// Replace the process rows from one poll and keep the list cursors inside them.
+    pub fn set_processes(&mut self, processes: &[ProcessInfo], users: HashMap<u32, String>) {
+        if !users.is_empty() {
+            self.users = users;
+        }
+        self.gpu_processes = process::gpu_rows(processes);
+        self.sys_processes = process::ram_rows(processes);
+        clamp(&mut self.gpu_proc_state, self.gpu_processes.len());
+        clamp(&mut self.sys_proc_state, self.sys_processes.len());
     }
 
     pub fn add_log(&mut self, log: String) {
@@ -287,5 +311,16 @@ impl App {
             None => 0,
         };
         self.log_state.select(Some(i));
+    }
+}
+
+/// Keep a list cursor inside `len` rows; select the first row once rows appear.
+fn clamp(state: &mut ListState, len: usize) {
+    match state.selected() {
+        Some(_) if len == 0 => state.select(None),
+        Some(i) if i >= len => state.select(Some(len - 1)),
+        Some(_) => {}
+        None if len > 0 => state.select(Some(0)),
+        None => {}
     }
 }

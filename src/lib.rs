@@ -8,5 +8,6 @@ pub mod config_v1;
 pub mod control_api;
 pub mod error;
 pub mod events;
+pub mod process;
 pub mod proxy_stream;
 pub mod ui;

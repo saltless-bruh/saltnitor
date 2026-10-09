@@ -1,11 +1,15 @@
 use crate::app::App;
+use crate::process::ProcessInfo;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{BarChart, Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Sparkline},
+    widgets::{
+        BarChart, Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Sparkline,
+    },
 };
+use std::collections::HashMap;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     // --- NEW: Minimum height lowered to 16 since we don't stack popups ---
@@ -48,7 +52,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.show_gpu_inspector {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[0]);
         let left_block = Block::default()
             .title(format!(" {} Architecture ", app.gpu_name))
@@ -56,7 +60,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .style(Style::default().fg(Color::Green));
         let right_block = Block::default()
             .title(" Active VRAM Processes ")
-            .title_bottom("[Up/Dn] Target | [x] Kill")
+            .title_bottom(process_bottom_line(
+                app,
+                &app.gpu_processes,
+                &app.gpu_proc_state,
+            ))
             .borders(Borders::ALL)
             .style(Style::default().fg(Color::Cyan));
 
@@ -147,10 +155,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 Style::default().fg(Color::DarkGray),
             ))));
         } else {
-            for (name, mem) in &app.gpu_processes {
-                items.push(ListItem::new(Line::from(Span::raw(format!(
-                    "  • {:<25} | {:.2} GB",
-                    name, mem
+            for p in &app.gpu_processes {
+                items.push(ListItem::new(Line::from(Span::raw(process_row(
+                    p, &app.users,
                 )))));
             }
         }
@@ -162,10 +169,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         );
         f.render_stateful_widget(list, right_inner, &mut app.gpu_proc_state);
     } else if app.show_sys_inspector {
-        // --- FIXED: Balanced 60/40 Split ---
+        // --- Balanced 50/50 split: the right panel fits a full process row (REQ-TUI-010) ---
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(main_chunks[0]);
         let left_block = Block::default()
             .title(format!(
@@ -176,7 +183,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .style(Style::default().fg(Color::Cyan));
         let right_block = Block::default()
             .title(" Top RAM Culprits ")
-            .title_bottom("[Up/Dn] Target | [x] Kill")
+            .title_bottom(process_bottom_line(
+                app,
+                &app.sys_processes,
+                &app.sys_proc_state,
+            ))
             .borders(Borders::ALL)
             .style(Style::default().fg(Color::Magenta));
 
@@ -313,16 +324,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 Style::default().fg(Color::DarkGray),
             ))));
         } else {
-            for (name, mem) in &app.sys_processes {
-                // Truncate name to 24 chars instead of 16 for better readability
-                let clean_name = if name.len() > 24 {
-                    format!("{}...", &name[..21])
-                } else {
-                    name.clone()
-                };
-                items.push(ListItem::new(Line::from(Span::raw(format!(
-                    "  • {:<24} | {:>5.2} GB",
-                    clean_name, mem
+            for p in &app.sys_processes {
+                items.push(ListItem::new(Line::from(Span::raw(process_row(
+                    p, &app.users,
                 )))));
             }
         }
@@ -948,6 +952,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from("  [t] Config Tuner (ngl, ctx, threads, batch, parallel)"),
             Line::from("  [i] Focus Active Deck (Press Esc to cancel)"), // <-- UPDATED
             Line::from("  [Up/Dn] Cycle Logs / Payloads / Sniper Targets"), // <-- UPDATED
+            Line::from("  [x] Terminate target (SIGTERM) | [X] Kill (asks y/N)"),
             Line::from(""),
             Line::from(Span::styled(
                 " --- Daemon Control (Requires Sudo) ---",
@@ -1052,14 +1057,46 @@ fn estimate_vram(model: &str, ctx: i32) -> Option<f64> {
     let ctx_vram = (ctx as f64 / 1024.0) * 0.125; // Base context overhead
     Some(file_vram + ctx_vram)
 }
+/// One inspector row: PID, user, name, resident RAM and VRAM (`n/a` when nvidia-smi gave none).
+fn process_row(p: &ProcessInfo, users: &HashMap<u32, String>) -> String {
+    let user = users
+        .get(&p.uid)
+        .cloned()
+        .unwrap_or_else(|| p.uid.to_string());
+    let ram_gb = p.memory_bytes as f64 / 1_073_741_824.0;
+    let vram = p.gpu_memory_bytes.map_or_else(
+        || "n/a".to_string(),
+        |b| format!("{:.1}G", b as f64 / 1_073_741_824.0),
+    );
+    format!(
+        "  {:>6} {:<8.8} {:<14.14} {:>6.1}G {:>6}",
+        p.pid, user, p.name, ram_gb, vram
+    )
+}
+
+/// Inspector footer: the pending SIGKILL prompt, else the selected row's command line, else the keys.
+fn process_bottom_line(app: &App, rows: &[ProcessInfo], state: &ListState) -> String {
+    if let Some(confirm) = &app.confirm_line {
+        return confirm.clone();
+    }
+    state
+        .selected()
+        .and_then(|i| rows.get(i))
+        .and_then(|p| p.command.clone())
+        .unwrap_or_else(|| "[Up/Dn] Target | [x] Term | [X] Kill".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     // tests may unwrap: a panic is the failure signal (REQ-CI-007 scopes the deny to non-test code)
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::draw;
+    use super::{draw, process_bottom_line, process_row};
     use crate::app::App;
+    use crate::process::ProcessInfo;
+    use ratatui::widgets::ListState;
     use ratatui::{Terminal, backend::TestBackend};
+    use std::collections::HashMap;
 
     /// Fixed data; every host-dependent field is overwritten (history is read from the CWD in App::new).
     fn fixture() -> App {
@@ -1088,8 +1125,29 @@ mod tests {
         app.vram_util = "54%".into();
         app.gpu_fan = "30%".into();
         app.gpu_clocks = "1800 MHz".into();
-        app.gpu_processes = vec![("llama-server".into(), 6.1)];
-        app.sys_processes = vec![("llama-server".into(), 9.5), ("saltnitor".into(), 0.1)];
+        let llama = ProcessInfo {
+            pid: 4242,
+            name: "llama-server".into(),
+            memory_bytes: 9_500_000_000,
+            gpu_memory_bytes: Some(6_100_000_000),
+            gpu_memory_reason: None,
+            command: Some("llama-server --port 8080".into()),
+            start_time_ticks: 1,
+            uid: 1000,
+        };
+        let me = ProcessInfo {
+            pid: 4300,
+            name: "saltnitor".into(),
+            memory_bytes: 100_000_000,
+            gpu_memory_bytes: None,
+            gpu_memory_reason: Some("not a GPU process".into()),
+            command: None,
+            start_time_ticks: 2,
+            uid: 1000,
+        };
+        app.gpu_processes = vec![llama.clone()];
+        app.sys_processes = vec![llama, me];
+        app.users = HashMap::from([(1000, "operator".to_string())]);
         app.swap_used = 0.5;
         app.swap_total = 8.0;
         app.sys_uptime = 3661;
@@ -1146,6 +1204,61 @@ mod tests {
         let mut app = fixture();
         app.show_sys_inspector = true;
         insta::assert_snapshot!("cpu_inspector", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-TUI-010/AC1, REQ-PROC-003/AC2
+    #[test]
+    fn cpu_inspector_confirm() {
+        let mut app = fixture();
+        app.show_sys_inspector = true;
+        app.sys_proc_state.select(Some(0));
+        app.confirm_line = Some("SIGKILL 4242 (llama-server)? [y/N]".into());
+        insta::assert_snapshot!("cpu_inspector_confirm", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-TUI-010/AC1
+    #[test]
+    fn footer_shows_confirm_then_command_then_keys() {
+        let mut app = fixture();
+        let mut state = ListState::default();
+        let rows = app.sys_processes.clone();
+        assert_eq!(
+            process_bottom_line(&app, &rows, &state),
+            "[Up/Dn] Target | [x] Term | [X] Kill"
+        );
+        state.select(Some(0));
+        assert_eq!(
+            process_bottom_line(&app, &rows, &state),
+            "llama-server --port 8080"
+        );
+        state.select(Some(1)); // no command known
+        assert_eq!(
+            process_bottom_line(&app, &rows, &state),
+            "[Up/Dn] Target | [x] Term | [X] Kill"
+        );
+        app.confirm_line = Some("SIGKILL 4242 (llama-server)? [y/N]".into());
+        assert_eq!(
+            process_bottom_line(&app, &rows, &state),
+            "SIGKILL 4242 (llama-server)? [y/N]"
+        );
+    }
+
+    /// Verifies: REQ-TUI-010/AC1, INV-18 — an unmeasured VRAM column reads `n/a`, never 0
+    #[test]
+    fn row_shows_pid_user_ram_and_vram_or_na() {
+        let app = fixture();
+        let row = process_row(&app.sys_processes[0], &app.users);
+        assert!(
+            row.contains("4242")
+                && row.contains("operator")
+                && row.contains("8.8G")
+                && row.contains("5.7G"),
+            "{row}"
+        );
+        let row = process_row(&app.sys_processes[1], &app.users);
+        assert!(row.ends_with("   n/a"), "{row}");
+        let unknown = process_row(&app.sys_processes[1], &HashMap::new());
+        assert!(unknown.contains("1000"), "{unknown}");
     }
 
     /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC3

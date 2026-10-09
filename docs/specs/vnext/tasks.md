@@ -286,7 +286,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `src/proxy_stream.rs`, `tests/proxy_failures.rs`
   - **Done when:** tests prove: the fake runtime sees the close ≤ 1 s after a client drop; 4xx/5xx pass through byte-exact; a reset before headers → 502; a hang → 504; a mid-stream crash → truncated with no `[DONE]` plus a logged `UPSTREAM_STREAM_ABORTED`; 33 MiB → 413 while 31 MiB passes; a missing `model` → 400.
 
-- [ ] **T1.13 — PID-based process control** · *test-first*
+- [x] **T1.13 — PID-based process control** · *test-first*
   - **Reqs:** REQ-PROC-001, REQ-PROC-002, REQ-PROC-003, REQ-PROC-004, REQ-PROC-005, REQ-PROC-006, REQ-PROC-007, REQ-TUI-010, REQ-TST-001, REQ-TST-008
   - **Depends:** T1.3
   - **Files:** `src/process.rs` (new), `src/main.rs` (inspectors), `src/ui.rs`, `tests/process_control.rs`
