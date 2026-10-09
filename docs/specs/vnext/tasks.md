@@ -208,7 +208,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `.gitignore`, `Cargo.lock`, `Cargo.toml` (`rust-version`), `rust-toolchain.toml`
   - **Done when:** `git ls-files Cargo.lock` is non-empty; `grep -n "Cargo.lock" .gitignore` finds nothing; `cargo build --locked` succeeds.
 
-- [ ] **T1.2 — Repository hygiene** `[P]`
+- [x] **T1.2 — Repository hygiene** `[P]`
   - **Reqs:** REQ-REPO-002, REQ-REPO-003, REQ-REPO-006, REQ-DOC-003
   - **Depends:** T1.1
   - **Files:** `.gitignore`, removed artifacts, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`

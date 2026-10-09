@@ -1,3 +1,10 @@
 /target
 **/*.rs.bk
-router.ini
+router.ini# local state and editor files (T1.2)
+.saltnitor_history
+crash_dump_*.txt
+saltnitor_crash_*.txt
+.vscode/
+.obsidian/
+.claude/settings.local.json
+__pycache__/
