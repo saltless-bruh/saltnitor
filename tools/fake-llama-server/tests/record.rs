@@ -70,7 +70,7 @@ async fn capture_issues_only_get_requests() {
 /// Verifies: REQ-TST-011/AC1
 #[tokio::test]
 async fn capture_redacts_home_prompts_and_bearer() {
-    let f = spawn(Scenario::default().with_model("/home/alice/models/q.gguf", true)).await;
+    let f = spawn(Scenario::default().with_model("/home/alice/models/q.gguf", true)).await; // invariants: allow home-path — sanitizer test input
     let out = tmpdir("redact");
     let mut o = opts(f.base_url(), out.clone());
     o.bearer = Some("sk-live-token".into());

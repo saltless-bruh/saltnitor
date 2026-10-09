@@ -24,7 +24,7 @@ Designed for developers running `llama.cpp` on Linux, Saltnitor provides hardwar
     - **Router tuner (`t`)**: A paginated editor that writes the tuned flags into the active model's `[section]` of the `router.ini` named by `router_ini` in `config.toml`, then restarts the unit. Without `router_ini` the tuner refuses to apply. Only these keys are written: `ngl`, `ctx-size`, `batch-size`, `ubatch-size`, `threads`, `threads-batch`, `parallel`, `flash-attn`, `cache-type-k`, `cache-type-v`, `cont-batching`, `rope-freq-base`, `rope-freq-scale`, `defrag-thold`, `mlock`, `no-mmap`.
         - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, batch, parallel slots, Flash Attention, `mlock`, `no_mmap`, KV cache types.
         - *Page 2 (Context & Speculation)*: RoPE scaling, defrag threshold, and the draft-model controls. The draft-model controls are displayed but **not yet written** to `router.ini` (BD-17).
-        - *Page 3 (Orchestration)*: threads per batch, u-batch, continuous batching, plus context-shift, metrics and API Key toggles. Context shift and metrics are **not yet written** (BD-17). The API Key toggle only decides whether the interrogator sends the client key; it does not change the router.
+        - *Page 3 (Orchestration)*: threads per batch, u-batch, continuous batching, plus context-shift, metrics and API Key toggles. Context shift and metrics are **not yet written** (BD-17). The API Key toggle only decides whether the hot-swap's direct warm-up call to the router sends `infer_bearer` (never the client key, never to a non-loopback `host`); it does not change the router.
 
 - **API Interrogator (`i`)**: A mini-console that sends a request through Saltnitor's own endpoint (`http://127.0.0.1:<control_port>/v1/chat/completions`) with the client key.
     - **Metrics**: Client-side time-to-first-token, and prompt / generation tokens-per-second taken from the runtime's `timings`. When the runtime sends no timings the rate is shown as an estimate (`est.`) or `n/a`, never as `0`.
@@ -138,7 +138,7 @@ est_vram_gb = 9.0
 est_ram_gb  = 18.0
 ```
 
-Authentication: when a control token is configured, **every `/v1` route requires `Authorization: Bearer <token>`**. Failures are JSON error envelopes. Client credentials are never forwarded to llama-server (use `infer_bearer` for that). With no token configured the API is open on loopback only. See [SECURITY.md](./SECURITY.md).
+Authentication: when a control token is configured, **every `/v1` route requires `Authorization: Bearer <token>`**. Failures are JSON error envelopes. Client credentials are never forwarded to llama-server (use `infer_bearer` for that). With no token configured the API is open on loopback only. See [SECURITY.md](./SECURITY.md). Which key goes where: the interrogator (`i`) talks to Saltnitor with `client_key_env` (set it to the control token); your agents use the control token as their API key; Saltnitor talks to llama-server with `infer_bearer`; the TUI hot-swap's direct call to the router also uses `infer_bearer`.
 
 ### 4. Point your IDE/agent at an OpenAI-compatible base URL
 Use your **section names** as the model ids. Two endpoints are available:

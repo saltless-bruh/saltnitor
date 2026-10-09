@@ -81,17 +81,14 @@ cargo fmt --all --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 ```
 
-**Close-out procedure** (the last step of each task; "run Close-out" below means exactly this):
+**Close-out procedure** (the last step of each task; "run Close-out" below means exactly this).
+
+> **Why two commits, no amend (final-review I15, 2026-10-09).** The first version of this procedure wrote the PROGRESS sha and then ran `git commit --amend`. An amend changes the commit's own sha, so a line written before it can never match; 15 of 16 P1 lines and 14 `Fixed by` shas pointed at unreachable commits and needed a repair commit. The sha written in PROGRESS is the **implementation commit's** sha, which already exists when the line is written. History is never rewritten.
 
 ```bash
 set -o pipefail
 # 1. SV passes (above).
-# 2. Tick the task and regenerate spec fields.
-sed -i 's/^- \[ \] \*\*T1\.N — /- [x] **T1.N — /' docs/specs/vnext/tasks.md     # N = the task
-python3 docs/specs/vnext/tools/spec_lint.py --sync && python3 docs/specs/vnext/tools/spec_lint.py
-# 3. PROGRESS line: date · task · sha(filled after commit, use "pending") · DONE · note
-printf '%s · T1.N · pending · DONE · <one-line note>\n' "$(date +%F)" >> docs/specs/vnext/PROGRESS.md
-# 4. Commit with explicit paths (never `git add -A`), then fix the sha in PROGRESS and amend.
+# 2. Commit the implementation first, with explicit paths (never `git add -A`). No tick, no PROGRESS line yet.
 git add <paths>
 git commit -F - <<'MSG'
 T1.N: <summary>
@@ -100,14 +97,23 @@ Task: T1.N
 Refs: <REQ ids from the task's Reqs line>
 <Protected-change: <paths> — <why>   (only when a protected path changed)>
 
-Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>
+Co-Authored-By: <the attribution line your session reminder specifies>
 MSG
-sha=$(git rev-parse --short HEAD); sed -i "s/ · T1.N · pending · / · T1.N · $sha · /" docs/specs/vnext/PROGRESS.md
-git add docs/specs/vnext/PROGRESS.md && git commit --amend --no-edit -q
+impl=$(git rev-parse --short HEAD)           # the sha PROGRESS.md will record: it exists and never changes
+# 3. Tick the task, regenerate spec fields, write the PROGRESS line with $impl.
+sed -i 's/^- \[ \] \*\*T1\.N — /- [x] **T1.N — /' docs/specs/vnext/tasks.md     # N = the task
+python3 docs/specs/vnext/tools/spec_lint.py --sync && python3 docs/specs/vnext/tools/spec_lint.py
+printf '%s · T1.N · %s · DONE · <one-line note>\n' "$(date +%F)" "$impl" >> docs/specs/vnext/PROGRESS.md
+# 4. A separate tick commit (docs/specs paths need the trailer). Never `--amend`.
+git add docs/specs/vnext/tasks.md docs/specs/vnext/PROGRESS.md
+git commit -q -m "T1.N: tick the task and log it in PROGRESS.md" -m "Task: T1.N" \
+  -m "Protected-change: docs/specs/vnext/PROGRESS.md, tasks.md — task ledger, sha $impl"
 # 5. Push and wait for CI (required green from Task 4 on).
 git push origin vnext
 gh run list --branch vnext --limit 1 --json databaseId,status --jq '.[0].databaseId' | xargs -r gh run watch --exit-status
 ```
+
+If CI forces a fix after the push, make a follow-up commit and (if the task's PROGRESS sha should name it) add a short follow-up line instead of editing the old one. DEFECTS.md `Fixed by` fields use the same rule: cite the implementation commit.
 
 **Blocked.** If an AC cannot be met: `- [!] BLOCKED: T1.N — <AC> cannot be met because <evidence>. Options: A/B. Need: <decision>.` in `tasks.md`, a PROGRESS line with `BLOCKED`, commit, stop.
 

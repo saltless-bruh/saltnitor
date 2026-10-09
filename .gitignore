@@ -5,6 +5,9 @@ router.ini
 .saltnitor_history
 crash_dump_*.txt
 saltnitor_crash_*.txt
+*.trace.csv
+benchmark-results/
+*.local.toml
 .vscode/
 .obsidian/
 .claude/settings.local.json

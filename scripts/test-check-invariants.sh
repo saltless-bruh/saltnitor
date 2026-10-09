@@ -30,6 +30,13 @@ check home-path    "const P: &str = \"$home/someone/x\";" src/events.rs
 check secret       "const K: &str = \"${key}abcdefghijklmnop\";" src/events.rs
 check build-tool   'Command::new("cmake").arg("..");' src/events.rs
 check artifact     'tracked' router.ini
+# nested and editor-dir artifacts (REQ-REPO-002/AC1): the scan is not root-anchored
+mkdir -p src/nested/benchmark-results .vscode
+check artifact     'tracked' src/nested/saltnitor_crash_1.txt
+check artifact     'tracked' src/nested/run.trace.csv
+check artifact     'tracked' src/nested/dev.local.toml
+check artifact     'tracked' src/nested/benchmark-results/r.json
+check artifact     'tracked' .vscode/settings.json
 # marker suppresses
 printf '%s\n' "const P: &str = \"$home/someone/x\"; // invariants: allow home-path — sanitizer test input" >> src/events.rs
 if scripts/check-invariants.sh >/dev/null 2>&1; then echo "ok: marker honoured"; else echo "FAIL: marker not honoured"; fail=1; fi

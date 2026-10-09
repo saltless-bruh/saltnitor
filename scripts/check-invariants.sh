@@ -26,7 +26,11 @@ scan home-path    '/home/[a-z_][a-z0-9_-]*/' ':!docs/specs' ':!*.md' ':!tests/fi
 # tests/ is out of scope: the protected acceptance suite carries placeholder bearer tokens.
 scan secret       '(sk-[A-Za-z0-9]{8,}|Bearer [A-Za-z0-9._-]{12,}|api[_-]?key *= *"[^"$<]{8,}")' 'src/' 'scripts/' 'examples/' '.github/' 'tools/*/src/' 'README.md'
 scan build-tool   'Command::new\("(git|cmake|make)"\)' 'src/'
-for f in $(git ls-files -- 'router.ini' '*.gguf' 'target/' 'saltnitor_crash_*' '.saltnitor_history' 'crash_dump_*'); do
+# `:(glob)**/` makes each pattern match at any depth, not only at the repository root (REQ-REPO-002/AC1).
+for f in $(git ls-files -- ':(glob)**/router.ini' '*.gguf' ':(glob)**/target/**' \
+    ':(glob)**/saltnitor_crash_*' ':(glob)**/.saltnitor_history' ':(glob)**/crash_dump_*' \
+    ':(glob)**/*.trace.csv' ':(glob)**/benchmark-results/**' ':(glob)**/*.local.toml' \
+    ':(glob)**/.vscode/**'); do
   hits+=("artifact"$'\t'"$f:1"$'\t'"tracked runtime artifact")
 done
 # ratchet
