@@ -10,6 +10,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::LazyLock;
 use std::task::{Context, Poll};
@@ -39,11 +40,12 @@ impl Default for ProxyLimits {
     }
 }
 
-/// The upstream client: connect and idle-between-reads timeouts come from config (REQ-PRX-010/AC1).
+/// The upstream client: only the connect timeout is client-wide. A client-level read timeout would
+/// also bound the wait for response headers, making `first_byte_ms` unreachable; the idle gap
+/// between body chunks is enforced per chunk by `AbortOnError` instead (REQ-PRX-010/AC1).
 pub fn upstream_client(l: &ProxyLimits) -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(l.connect)
-        .read_timeout(l.idle)
         .build()
         .unwrap_or_default()
 }
@@ -157,12 +159,48 @@ pub fn content_length(h: &HeaderMap) -> Option<u64> {
 }
 
 /// Ends the downstream body with an error (hyper aborts the connection) the moment the upstream
-/// body fails: no synthetic `[DONE]`, nothing fabricated (REQ-PRX-011/AC1).
+/// body fails or stalls longer than `idle`: no synthetic `[DONE]`, nothing fabricated
+/// (REQ-PRX-011/AC1). The idle deadline is re-armed on every chunk (REQ-PRX-010/AC1).
 struct AbortOnError {
     inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     request_id: String,
     log: Box<dyn Fn(String) + Send + Sync>,
+    idle: Duration,
+    deadline: Pin<Box<tokio::time::Sleep>>,
     failed: bool,
+}
+impl AbortOnError {
+    fn new(
+        inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
+        request_id: &str,
+        log: Box<dyn Fn(String) + Send + Sync>,
+        idle: Duration,
+    ) -> Self {
+        Self {
+            inner,
+            request_id: request_id.to_string(),
+            log,
+            idle,
+            deadline: Box::pin(tokio::time::sleep(idle)),
+            failed: false,
+        }
+    }
+    fn rearm(&mut self) {
+        let now = tokio::time::Instant::now();
+        // An absurdly large configured idle must not overflow the clock: treat it as "never".
+        let at = now
+            .checked_add(self.idle)
+            .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
+        self.deadline.as_mut().reset(at);
+    }
+    fn abort(&mut self, kind: &str) -> Poll<Option<Result<Bytes, std::io::Error>>> {
+        self.failed = true;
+        (self.log)(format!(
+            "UPSTREAM_STREAM_ABORTED request_id={} {kind}",
+            self.request_id
+        ));
+        Poll::Ready(Some(Err(std::io::Error::other("upstream stream aborted"))))
+    }
 }
 impl Stream for AbortOnError {
     type Item = Result<Bytes, std::io::Error>;
@@ -171,22 +209,19 @@ impl Stream for AbortOnError {
             return Poll::Ready(None);
         }
         match self.inner.as_mut().poll_next(cx) {
-            Poll::Ready(Some(Ok(b))) => Poll::Ready(Some(Ok(b))),
-            Poll::Ready(Some(Err(e))) => {
-                self.failed = true;
-                let kind = if e.is_timeout() {
-                    "idle timeout between chunks"
-                } else {
-                    "upstream failed mid-stream"
-                };
-                (self.log)(format!(
-                    "UPSTREAM_STREAM_ABORTED request_id={} {kind}",
-                    self.request_id
-                ));
-                Poll::Ready(Some(Err(std::io::Error::other("upstream stream aborted"))))
+            Poll::Ready(Some(Ok(b))) => {
+                self.rearm();
+                Poll::Ready(Some(Ok(b)))
             }
+            Poll::Ready(Some(Err(_))) => self.abort("upstream failed mid-stream"),
             Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
+            Poll::Pending => {
+                if self.deadline.as_mut().poll(cx).is_ready() {
+                    self.abort("idle timeout between chunks")
+                } else {
+                    Poll::Pending
+                }
+            }
         }
     }
 }
@@ -253,12 +288,12 @@ pub async fn forward(
         b = b.header(n, v);
     }
     b = b.header("x-request-id", request_id);
-    let stream = AbortOnError {
-        inner: Box::pin(upstream.bytes_stream()),
-        request_id: request_id.to_string(),
-        log: Box::new(log),
-        failed: false,
-    };
+    let stream = AbortOnError::new(
+        Box::pin(upstream.bytes_stream()),
+        request_id,
+        Box::new(log),
+        limits.idle,
+    );
     b.body(Body::from_stream(stream)).unwrap_or_else(|e| {
         ApiError::new(
             ErrorCode::RuntimeUnhealthy,

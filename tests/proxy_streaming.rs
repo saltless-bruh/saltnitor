@@ -435,3 +435,81 @@ async fn auth_rejections_carry_the_request_id() {
     assert_eq!(v["error"]["request_id"], "auth-1");
     assert!(fake.recorder.of_kind("request").is_empty());
 }
+
+fn short_idle() -> ProxyLimits {
+    ProxyLimits {
+        idle: Duration::from_millis(150),
+        first_byte: Duration::from_secs(10),
+        ..limits()
+    }
+}
+
+/// Verifies: REQ-PRX-010/AC1 — the idle timeout limits the gap between body chunks, not the wait
+/// for response headers (a slow prefill may take up to first_byte_ms to answer).
+#[tokio::test]
+async fn a_slow_first_byte_is_bounded_by_first_byte_not_idle() {
+    // Non-streaming chat: the fake holds the headers back for 600 ms, four times the idle limit.
+    let fault = Fault::Chunks {
+        items: vec!["slow".into()],
+        delay_ms: 600,
+    };
+    let r = rig(scenario(fault), None, short_idle()).await;
+    let resp = r
+        .http
+        .post(format!("{}/v1/chat/completions", r.base))
+        .body(r#"{"model":"A"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        200,
+        "idle_ms must not cut off the header wait"
+    );
+    assert!(resp.text().await.unwrap().contains("slow"));
+}
+
+/// Verifies: REQ-PRX-010/AC1, REQ-PRX-011/AC1 — a stall between chunks longer than idle_ms ends
+/// the body with an error (no fabricated terminator).
+#[tokio::test]
+async fn a_stall_between_chunks_longer_than_idle_aborts_the_body() {
+    let r = rig(
+        scenario(raw(&["data: A\n\n", "data: B\n\n"], 600)),
+        None,
+        short_idle(),
+    )
+    .await;
+    let mut resp = r
+        .http
+        .post(format!("{}/v1/chat/completions", r.base))
+        .body(r#"{"model":"A","stream":true}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(&resp.chunk().await.unwrap().unwrap()[..], b"data: A\n\n");
+    assert!(
+        resp.chunk().await.is_err(),
+        "the body must end in an error, not deliver B or a synthetic terminator"
+    );
+}
+
+/// Verifies: REQ-PRX-010/AC1 — a header wait longer than first_byte_ms is UPSTREAM_TIMEOUT.
+#[tokio::test]
+async fn no_headers_within_first_byte_is_a_504_envelope() {
+    let l = ProxyLimits {
+        first_byte: Duration::from_millis(200),
+        ..limits()
+    };
+    let r = rig(scenario(Fault::HangBeforeHeaders), None, l).await;
+    let resp = r
+        .http
+        .post(format!("{}/v1/chat/completions", r.base))
+        .body(r#"{"model":"A"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 504);
+    let v: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(v["error"]["code"], "UPSTREAM_TIMEOUT");
+}
