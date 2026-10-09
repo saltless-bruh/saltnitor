@@ -7,68 +7,68 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/main.rs:75` — `toml::from_str(&content).unwrap_or_default()`
 - **Repro:** write `port = "x"` to `<tmp>/.config/saltnitor/config.toml`, run `HOME=<tmp> cargo run` → starts with port 8080 and no diagnostic.
 - **Status:** confirmed — the parse error is discarded by `unwrap_or_default()` on the cited line.
-- **Fixed by:** T1.7 (`3bc74ac`) — strict loader; `tests/config_strict.rs::type_error_exits_2_with_the_diagnostic_and_leaves_the_port_free`
+- **Fixed by:** T1.7 (`9cc518b`) — strict loader; `tests/config_strict.rs::type_error_exits_2_with_the_diagnostic_and_leaves_the_port_free`
 
 ### BD-02 — The proxy buffers the whole upstream body
 - **Evidence (c89f278):** `src/control_api.rs:388` — `match resp.bytes().await {`
 - **Repro:** `cargo test bd02_first_byte_timing -- --ignored --nocapture` (added in T0.6) prints first-byte times direct vs through Saltnitor.
 - **Status:** confirmed — the full body is awaited before the response is built; timing evidence appended by T0.6.
 - **Timing (2026-09-28, fake runtime, 5 SSE chunks 200 ms apart, two runs identical):** direct first byte 201 ms / total 1207 ms; through Saltnitor first byte 1208 ms / total 1208 ms — the client receives nothing until the stream has ended.
-- **Fixed by:** T1.11 (`b90e8fd`) — `src/proxy_stream.rs`; `tests/proxy_streaming.rs::first_chunk_is_forwarded_before_the_second_is_sent`
+- **Fixed by:** T1.11 (`c63da04`) — `src/proxy_stream.rs`; `tests/proxy_streaming.rs::first_chunk_is_forwarded_before_the_second_is_sent`
 
 ### BD-03 — Auth is only checked on the ensure routes
 - **Evidence (c89f278):** `src/control_api.rs:286`, `src/control_api.rs:318` — `auth_ok` is called only in `h_ensure` / `h_ensure_stream`
 - **Repro:** set `control_token`, then `curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:8765/v1/status` → 200 without a bearer.
 - **Status:** confirmed — `h_status`, `h_models`, `h_chat` never call `auth_ok`.
-- **Fixed by:** T1.9 (`b23b045`) — auth middleware + POLICY table; `tests/auth_policy.rs::every_route_gets_the_policy_outcome`
+- **Fixed by:** T1.9 (`bcc122d`) — auth middleware + POLICY table; `tests/auth_policy.rs::every_route_gets_the_policy_outcome`
 
 ### BD-04 — `?token=` is always accepted on `/v1/ensure/stream`
 - **Evidence (c89f278):** `src/control_api.rs:241`, `src/control_api.rs:319` — `req.token.as_deref() == Some(t.as_str())`
 - **Repro:** `cargo test bd04_query_token_is_always_accepted -- --ignored --nocapture` → HTTP 200 with a `?token=` and no header; there is no switch to refuse query tokens.
 - **Status:** confirmed — the query token is compared unconditionally.
-- **Fixed by:** T1.9 (`b23b045`) — `allow_query_token` default off; `tests/auth_policy.rs::query_token_is_ignored_by_default`
+- **Fixed by:** T1.9 (`bcc122d`) — `allow_query_token` default off; `tests/auth_policy.rs::query_token_is_ignored_by_default`
 
 ### BD-05 — Process Sniper kills by name; PIDs are dropped
 - **Evidence (c89f278):** `src/main.rs:468`, `src/main.rs:494`, `src/main.rs:284` — `killall -9 <name>`; process list deduplicated by name via `seen_names`
 - **Repro:** run two processes named `sleep`, open the CPU inspector (`c`), select one, press `x` → both are killed.
 - **Status:** confirmed — only the name reaches `killall`.
-- **Fixed by:** T1.13 (`aaecc7c`) — PID/pidfd control in `src/process.rs`; `tests/process_control.rs::terminating_one_of_two_same_named_processes_leaves_the_other_alive`
+- **Fixed by:** T1.13 (`27cd25b`) — PID/pidfd control in `src/process.rs`; `tests/process_control.rs::terminating_one_of_two_same_named_processes_leaves_the_other_alive`
 
 ### BD-06 — Hardcoded router.ini path
 - **Evidence (c89f278):** `src/main.rs:578`, `launch_router.sh:15` — `/home/laz/ai-models/llama.cpp/router.ini`
 - **Repro:** run as any user other than `laz`, open the tuner, press Enter → `TUNER ERROR: cannot read /home/laz/ai-models/llama.cpp/router.ini`.
 - **Status:** confirmed — the path is a `const` literal.
-- **Fixed by:** T1.6 (`56c3de0`) — `router_ini` config key; the tuner refuses to apply without it
+- **Fixed by:** T1.6 (`b35c6e5`) — `router_ini` config key; the tuner refuses to apply without it
 
 ### BD-07 — Hardcoded bearer token
 - **Evidence (c89f278):** `src/main.rs:660`, `src/main.rs:748` — `"Bearer sk-saltnitor-2026"`; also `launch_router.sh:42`, `test_control_api.sh:9`
 - **Repro:** `git grep -n sk-saltnitor-2026 c89f278` lists four files.
 - **Status:** confirmed — the token is a literal in source and scripts.
-- **Fixed by:** T1.6 (`56c3de0`) — literal key removed; `client_key_env` / `control_token_env`; `scripts/check-invariants.sh` secret rule
+- **Fixed by:** T1.6 (`b35c6e5`) — literal key removed; `client_key_env` / `control_token_env`; `scripts/check-invariants.sh` secret rule
 
 ### BD-08 — `.gitignore` ignores `Cargo.lock`
 - **Evidence (c89f278):** `.gitignore:2` — `Cargo.lock`
 - **Repro:** `git ls-files Cargo.lock` prints nothing; CI resolves dependencies fresh on every run.
 - **Status:** confirmed — the lockfile is ignored.
-- **Fixed by:** T1.1 (`22e918c`) — `Cargo.lock` tracked; CI builds with `--locked`
+- **Fixed by:** T1.1 (`44fc4fa`) — `Cargo.lock` tracked; CI builds with `--locked`
 
 ### BD-09 — Committed artifacts
 - **Evidence (c89f278):** `git ls-tree -r --name-only c89f278 | grep -E 'saltnitor_history|crash_dump|legacy.zip|.vscode/settings.json'`
 - **Repro:** the command above lists `.saltnitor_history`, `.vscode/settings.json`, `crash_dump_20260511_163653.txt`, `legacy.zip`.
 - **Status:** confirmed — all four are tracked.
-- **Fixed by:** T1.2 (`ff13456`) — local artefacts untracked and ignored, `legacy.zip` dropped (`git ls-files` lists none of the four)
+- **Fixed by:** T1.2 (`ee64dbf`) — local artefacts untracked and ignored, `legacy.zip` dropped (`git ls-files` lists none of the four)
 
 ### BD-10 — CI only builds and runs zero tests
 - **Evidence (c89f278):** `.github/workflows/rust.yml:20`, `.github/workflows/rust.yml:22` — `cargo build --verbose`, `cargo test --verbose`
 - **Repro:** `cargo test` at c89f278 → `running 0 tests`.
 - **Status:** confirmed — no fmt/clippy/audit steps and no tests (T0.5–T0.7 add the first tests).
-- **Fixed by:** T1.3 (`9689c57`) — `.github/workflows/ci.yml` runs `cargo test --all --locked` plus the test-count gate
+- **Fixed by:** T1.3 (`dea52f1`) — `.github/workflows/ci.yml` runs `cargo test --all --locked` plus the test-count gate
 
 ### BD-11 — Release uses an archived action and builds unlocked
 - **Evidence (c89f278):** `.github/workflows/release.yml:16`, `.github/workflows/release.yml:18` — `cargo build --release`; `actions/upload-release-asset@v1`
 - **Repro:** read the workflow; no `--locked`, and the upload action is archived upstream.
 - **Status:** confirmed — both lines as described.
-- **Fixed by:** T1.4 (`85f8b80`) — `.github/workflows/release.yml` builds `--locked` and uploads with `gh release upload`
+- **Fixed by:** T1.4 (`fea0b15`) — `.github/workflows/release.yml` builds `--locked` and uploads with `gh release upload`
 
 ### BD-12 — `main()` is ~850 lines
 - **Evidence (c89f278):** `src/main.rs:143`, `src/main.rs:993` — `#[tokio::main]` … closing brace
@@ -92,13 +92,13 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/control_api.rs:411`, `src/control_api.rs:413` — `eprintln!("[control_api] bind {} failed: {}", addr, e)`
 - **Repro:** occupy port 8765, start Saltnitor → the TUI starts, the message is written behind the alternate screen, the API is simply absent.
 - **Status:** confirmed — the error is printed to stderr only.
-- **Fixed by:** T1.14 (`fa2c035`) — bind failure surfaced; `tests/error_surfacing.rs::occupied_control_port_produces_an_error_event`
+- **Fixed by:** T1.14 (`297086d`) — bind failure surfaced; `tests/error_surfacing.rs::occupied_control_port_produces_an_error_event`
 
 ### BD-16 — Panicking `unwrap`/`expect` in background tasks
 - **Evidence (c89f278):** `src/main.rs:242`, `src/main.rs:243`, `src/main.rs:364`, `src/main.rs:366` — `event::poll(..).unwrap()`, `.expect("Failed to spawn journalctl")`
 - **Repro:** run with `journalctl` unavailable after preflight (e.g. PATH changed) → the log task panics.
 - **Status:** confirmed — the calls panic on error.
-- **Fixed by:** T1.14 (`fa2c035`) — `unwrap_used` denied crate-wide, no exceptions
+- **Fixed by:** T1.14 (`297086d`) — `unwrap_used` denied crate-wide, no exceptions
 
 ### BD-17 — Some tuner controls are never applied
 - **Evidence (c89f278):** `src/main.rs:554`, `src/main.rs:571` — the `kv` list written to router.ini
@@ -110,7 +110,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/main.rs:755`, `src/main.rs:784` — `eval_tps: 0.0`; `gen_tps = total_tokens / total_time_s` where tokens are SSE content chunks and time includes TTFT
 - **Repro:** fire any prompt from the interrogator → eval t/s always shows 0.0.
 - **Status:** confirmed — `eval_tps` is the literal `0.0`.
-- **Fixed by:** T1.15 (`c702781`) — rates from runtime `timings`, else `est.`/`n/a`; `src/interrogate.rs::tests::no_timings_means_estimated_or_not_available_never_zero`
+- **Fixed by:** T1.15 (`6455835`) — rates from runtime `timings`, else `est.`/`n/a`; `src/interrogate.rs::tests::no_timings_means_estimated_or_not_available_never_zero`
 
 ### BD-19 — TUI hot-swap bypasses the oracle
 - **Evidence (c89f278):** `src/main.rs:622` — hot-swap Enter guesses NGL from the name and POSTs to the router directly
@@ -128,7 +128,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/app.rs:118`, `src/main.rs:986` — `".saltnitor_history"`
 - **Repro:** start Saltnitor from two different directories → two separate histories; under `sudo`, a root-owned file.
 - **Status:** confirmed — relative path on both read and write.
-- **Fixed by:** T1.15 (`c702781`) — history under `$XDG_STATE_HOME/saltnitor/history`; `src/interrogate.rs::tests::history_lives_under_xdg_state_home`
+- **Fixed by:** T1.15 (`6455835`) — history under `$XDG_STATE_HOME/saltnitor/history`; `src/interrogate.rs::tests::history_lives_under_xdg_state_home`
 
 ### BD-22 — README drift
 - **Evidence (c89f278):** `README.md:23` — tuner "generates a native Linux `router.env`"; `README.md:134` — links `integrations/INTEGRATION.md`
@@ -146,7 +146,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/control_api.rs:355` — `body: Bytes` extractor with axum's default body limit
 - **Repro:** POST a 3 MB chat body to `/v1/chat/completions` → 413 before the handler runs.
 - **Status:** confirmed — no `DefaultBodyLimit` override on the router.
-- **Fixed by:** T1.12 (`2a68813`) — 32 MiB `max_body_bytes`; `tests/proxy_failures.rs::thirty_three_mib_is_413_and_thirty_one_mib_passes`
+- **Fixed by:** T1.12 (`4278528`) — 32 MiB `max_body_bytes`; `tests/proxy_failures.rs::thirty_three_mib_is_413_and_thirty_one_mib_passes`
 
 ### BD-25 — The tuner edits the live runtime config in place
 - **Evidence (c89f278):** `src/main.rs:577`, `src/main.rs:584` — writes router.ini, then `sudo -n systemctl restart`
@@ -158,7 +158,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/main.rs:82`, `src/main.rs:83` — `["journalctl", "ss", "systemctl", "killall"]`
 - **Repro:** run on a machine without `killall` → exit 1 before the TUI starts, even if no sniper action is ever used.
 - **Status:** confirmed — unconditional check.
-- **Fixed by:** T1.13 (`aaecc7c`) — `killall` dropped from the preflight command list
+- **Fixed by:** T1.13 (`27cd25b`) — `killall` dropped from the preflight command list
 
 ### BD-27 — Port auditor builds a shell command string
 - **Evidence (c89f278):** `src/main.rs:406`, `src/main.rs:407` — `format!("ss -lptn 'sport = :{}'", port_e)` run via `sh -c`
@@ -176,7 +176,7 @@ Status meanings: `confirmed` — the defect is visible at the cited lines; `disp
 - **Evidence (c89f278):** `src/control_api.rs:299`, `src/control_api.rs:369` — 507 on `/v1/ensure`, 503 on chat
 - **Repro:** oracle reject via both routes → 507 JSON vs 503 plain text.
 - **Status:** confirmed — pinned (not endorsed) by T0.6 tests `pins_bd29_ensure_oracle_reject_is_507_json`, `pins_bd29_chat_oracle_reject_is_503_plain_text`, `pins_bd29_chat_errors_are_plain_text`, `pins_bd29_chat_load_failure_is_502_plain_text`, `pins_bd29_chat_upstream_body_failure_is_502_plain_text`.
-- **Fixed by:** T1.8 (`ef2158e`) — `ApiError` envelopes; `src/control_api.rs::tests::ensure_oracle_reject_is_507_envelope`, `::chat_oracle_reject_is_507_envelope`
+- **Fixed by:** T1.8 (`bf2370a`) — `ApiError` envelopes; `src/control_api.rs::tests::ensure_oracle_reject_is_507_envelope`, `::chat_oracle_reject_is_507_envelope`
 
 ### BD-30 — Tuner title says router.env
 - **Evidence (c89f278):** `src/ui.rs:355` — `" Deep router.env Tuner [Page {}/3] "`
