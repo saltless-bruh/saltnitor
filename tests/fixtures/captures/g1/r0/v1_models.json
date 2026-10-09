@@ -1,0 +1,262 @@
+{
+  "data": [
+    {
+      "aliases": [],
+      "architecture": {
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "can_remove": false,
+      "created": 1791529876,
+      "id": "A_FOCUS",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "source": "preset",
+      "status": {
+        "args": [
+          "${HOME}/ai-runtimes/codacus-stable/build/bin/llama-server",
+          "--cache-reuse",
+          "256",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--alias",
+          "A_FOCUS",
+          "--batch-size",
+          "2048",
+          "--ctx-size",
+          "262144",
+          "--cache-type-k",
+          "q8_0",
+          "--cache-type-v",
+          "q8_0",
+          "--flash-attn",
+          "on",
+          "--model",
+          "${HOME}/ai-models/llama.cpp/models/Qwen3.5-9B-UD-Q5_K_XL.gguf",
+          "--n-gpu-layers",
+          "99",
+          "--threads",
+          "7",
+          "--ubatch-size",
+          "512"
+        ],
+        "preset": "[A_FOCUS]\ncache-reuse = 256\nbatch-size = 2048\nctx-size = 262144\ncache-type-k = q8_0\ncache-type-v = q8_0\nflash-attn = on\nmodel = ${HOME}/ai-models/llama.cpp/models/Qwen3.5-9B-UD-Q5_K_XL.gguf\nn-gpu-layers = 99\nthreads = 7\nubatch-size = 512\nstop-timeout = 300\n\n",
+        "value": "unloaded"
+      },
+      "tags": []
+    },
+    {
+      "aliases": [],
+      "architecture": {
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "can_remove": false,
+      "created": 1791529876,
+      "id": "A_STD",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "source": "preset",
+      "status": {
+        "args": [
+          "${HOME}/ai-runtimes/codacus-stable/build/bin/llama-server",
+          "--cache-reuse",
+          "256",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--alias",
+          "A_STD",
+          "--batch-size",
+          "2048",
+          "--ctx-size",
+          "65536",
+          "--cache-type-k",
+          "q8_0",
+          "--cache-type-v",
+          "q8_0",
+          "--flash-attn",
+          "on",
+          "--model",
+          "${HOME}/ai-models/llama.cpp/models/Qwen3.5-9B-UD-Q5_K_XL.gguf",
+          "--n-gpu-layers",
+          "99",
+          "--threads",
+          "7",
+          "--ubatch-size",
+          "1024"
+        ],
+        "preset": "[A_STD]\ncache-reuse = 256\nbatch-size = 2048\nctx-size = 65536\ncache-type-k = q8_0\ncache-type-v = q8_0\nflash-attn = on\nmodel = ${HOME}/ai-models/llama.cpp/models/Qwen3.5-9B-UD-Q5_K_XL.gguf\nn-gpu-layers = 99\nthreads = 7\nubatch-size = 1024\n\n",
+        "value": "unloaded"
+      },
+      "tags": []
+    },
+    {
+      "aliases": [],
+      "architecture": {
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "can_remove": false,
+      "created": 1791529876,
+      "id": "B",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "source": "preset",
+      "status": {
+        "args": [
+          "${HOME}/ai-runtimes/codacus-stable/build/bin/llama-server",
+          "--cache-reuse",
+          "256",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--alias",
+          "B",
+          "--batch-size",
+          "2048",
+          "--ctx-size",
+          "65536",
+          "--cache-type-k",
+          "q8_0",
+          "--cache-type-v",
+          "q8_0",
+          "--flash-attn",
+          "on",
+          "--model",
+          "${HOME}/ai-models/llama.cpp/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+          "--n-gpu-layers",
+          "99",
+          "--override-tensor",
+          ".ffn_.*_exps.=CPU",
+          "--threads",
+          "7",
+          "--ubatch-size",
+          "1024"
+        ],
+        "preset": "[B]\ncache-reuse = 256\nbatch-size = 2048\nctx-size = 65536\ncache-type-k = q8_0\ncache-type-v = q8_0\nflash-attn = on\nmodel = ${HOME}/ai-models/llama.cpp/models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf\nn-gpu-layers = 99\noverride-tensor = .ffn_.*_exps.=CPU\nthreads = 7\nubatch-size = 1024\nstop-timeout = 120\n\n",
+        "value": "unloaded"
+      },
+      "tags": []
+    },
+    {
+      "aliases": [],
+      "architecture": {
+        "input_modalities": [
+          "text",
+          "image",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "can_remove": true,
+      "created": 1791529876,
+      "id": "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "source": "cache",
+      "status": {
+        "args": [
+          "${HOME}/ai-runtimes/codacus-stable/build/bin/llama-server",
+          "--cache-reuse",
+          "256",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--alias",
+          "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL",
+          "--batch-size",
+          "2048",
+          "--cache-type-k",
+          "q8_0",
+          "--cache-type-v",
+          "q8_0",
+          "--flash-attn",
+          "on",
+          "--hf-repo",
+          "unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL",
+          "--n-gpu-layers",
+          "99",
+          "--threads",
+          "7",
+          "--ubatch-size",
+          "1024"
+        ],
+        "preset": "[unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL]\ncache-reuse = 256\nbatch-size = 2048\ncache-type-k = q8_0\ncache-type-v = q8_0\nflash-attn = on\nhf-repo = unsloth/gemma-4-E2B-it-GGUF:Q4_K_XL\nn-gpu-layers = 99\nthreads = 7\nubatch-size = 1024\n\n",
+        "value": "unloaded"
+      },
+      "tags": []
+    },
+    {
+      "aliases": [],
+      "architecture": {
+        "input_modalities": [
+          "text",
+          "image",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "can_remove": true,
+      "created": 1791529876,
+      "id": "unsloth/gemma-4-E4B-it-GGUF:Q4_K_XL",
+      "object": "model",
+      "owned_by": "llamacpp",
+      "source": "cache",
+      "status": {
+        "args": [
+          "${HOME}/ai-runtimes/codacus-stable/build/bin/llama-server",
+          "--cache-reuse",
+          "256",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--alias",
+          "unsloth/gemma-4-E4B-it-GGUF:Q4_K_XL",
+          "--batch-size",
+          "2048",
+          "--cache-type-k",
+          "q8_0",
+          "--cache-type-v",
+          "q8_0",
+          "--flash-attn",
+          "on",
+          "--hf-repo",
+          "unsloth/gemma-4-E4B-it-GGUF:Q4_K_XL",
+          "--n-gpu-layers",
+          "99",
+          "--threads",
+          "7",
+          "--ubatch-size",
+          "1024"
+        ],
+        "preset": "[unsloth/gemma-4-E4B-it-GGUF:Q4_K_XL]\ncache-reuse = 256\nbatch-size = 2048\ncache-type-k = q8_0\ncache-type-v = q8_0\nflash-attn = on\nhf-repo = unsloth/gemma-4-E4B-it-GGUF:Q4_K_XL\nn-gpu-layers = 99\nthreads = 7\nubatch-size = 1024\n\n",
+        "value": "unloaded"
+      },
+      "tags": []
+    }
+  ],
+  "object": "list"
+}

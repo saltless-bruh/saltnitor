@@ -1,0 +1,14 @@
+{
+  "build_info": "b10818-27c54b4bb",
+  "cors_proxy_enabled": false,
+  "default_generation_settings": {
+    "n_ctx": 0,
+    "params": null
+  },
+  "max_instances": 1,
+  "model_alias": "llama-server",
+  "model_path": "none",
+  "models_autoload": true,
+  "role": "router",
+  "ui_settings": {}
+}

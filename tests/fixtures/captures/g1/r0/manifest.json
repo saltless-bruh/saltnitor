@@ -1,0 +1,101 @@
+{
+  "captured_unix": 1791529876,
+  "upstream": "http://127.0.0.1:8080",
+  "endpoints": [
+    {
+      "path": "/health",
+      "file": "health.json",
+      "status": 200,
+      "latency_ms": 0,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "LIVE",
+      "shape": {
+        "kind": "ok"
+      }
+    },
+    {
+      "path": "/models",
+      "file": "models.json",
+      "status": 200,
+      "latency_ms": 0,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "LIVE",
+      "shape": {
+        "kind": "drift",
+        "added": [
+          "data[].architecture",
+          "data[].architecture.input_modalities[]",
+          "data[].architecture.output_modalities[]",
+          "data[].can_remove",
+          "data[].source"
+        ],
+        "removed": [
+          "data[].status.exit_code",
+          "data[].status.failed"
+        ]
+      }
+    },
+    {
+      "path": "/v1/models",
+      "file": "v1_models.json",
+      "status": 200,
+      "latency_ms": 0,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "LIVE",
+      "shape": {
+        "kind": "drift",
+        "added": [
+          "data[].architecture",
+          "data[].architecture.input_modalities[]",
+          "data[].architecture.output_modalities[]",
+          "data[].can_remove",
+          "data[].source"
+        ],
+        "removed": [
+          "data[].status.exit_code",
+          "data[].status.failed"
+        ]
+      }
+    },
+    {
+      "path": "/props",
+      "file": "props.json",
+      "status": 200,
+      "latency_ms": 0,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "LIVE",
+      "shape": {
+        "kind": "drift",
+        "added": [
+          "cors_proxy_enabled",
+          "ui_settings"
+        ],
+        "removed": [
+          "webui_settings"
+        ]
+      }
+    },
+    {
+      "path": "/slots",
+      "file": "slots.json",
+      "status": 400,
+      "latency_ms": 2,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "DEGRADED",
+      "shape": {
+        "kind": "ok"
+      }
+    },
+    {
+      "path": "/metrics",
+      "file": "metrics.txt",
+      "status": 400,
+      "latency_ms": 0,
+      "content_type": "application/json; charset=utf-8",
+      "liveness": "DEGRADED",
+      "shape": {
+        "kind": "ok"
+      }
+    }
+  ]
+}

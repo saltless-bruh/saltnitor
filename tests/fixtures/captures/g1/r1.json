@@ -1,0 +1,62 @@
+{
+  "label": "g1",
+  "captured_unix": 1791529925,
+  "a": "A_STD",
+  "b": "B",
+  "steps": [
+    {
+      "step": "ensure A_STD",
+      "http": 200,
+      "ttfb_ms": 22476,
+      "total_ms": 22476,
+      "outcome": "loaded",
+      "load_ms": 22451,
+      "keys": [
+        "endpoint",
+        "load_ms",
+        "model",
+        "status",
+        "vram_estimate_gb"
+      ]
+    },
+    {
+      "step": "chat stream A_STD",
+      "http": 200,
+      "ttfb_ms": 154,
+      "total_ms": 602,
+      "chunks": 18,
+      "done": true
+    },
+    {
+      "step": "ensure B",
+      "http": 200,
+      "ttfb_ms": 25238,
+      "total_ms": 25241,
+      "outcome": "loaded",
+      "load_ms": 25218,
+      "keys": [
+        "endpoint",
+        "load_ms",
+        "model",
+        "status",
+        "vram_estimate_gb"
+      ]
+    },
+    {
+      "step": "status",
+      "http": 200,
+      "ttfb_ms": 40,
+      "total_ms": 40,
+      "outcome": null,
+      "load_ms": null,
+      "keys": [
+        "endpoint",
+        "profiles[]",
+        "ram_free_gb",
+        "resident_models[]",
+        "vram_total_gb",
+        "vram_used_gb"
+      ]
+    }
+  ]
+}
