@@ -7,12 +7,12 @@ use crossterm::{
 };
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use reqwest::Client;
-use saltnitor::{app, auth, config_v1, control_api, events, process, proxy_stream, ui};
+use saltnitor::{
+    app, auth, config_v1, control_api, events, interrogate, process, proxy_stream, ui,
+};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Instant;
 use std::{io, time::Duration};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -276,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     app.router_ini = toml_conf.router_ini.clone();
     app.term_grace_ms = toml_conf.process.term_grace_ms;
+    app.control_port = toml_conf.control_port.unwrap_or(8765);
     app.client_bearer = config_v1::client_bearer(toml_conf.client_key_env.as_deref());
     app.redactor = auth::Redactor::new(
         [
@@ -872,64 +873,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         app.last_ttft = 0;
                                         let payload = app.console_input.clone();
                                         let tx_api = tx.clone();
-                                        let host_api = app.host.clone();
-                                        let port_api = app.port;
-
-                                        let bearer = if app.api_key { app.client_bearer.clone() } else { None };
-                                        tokio::spawn(async move {
-                                            let client = Client::new();
-                                            let start = Instant::now();
-                                            let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
-
-                                            let mut payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
-                                            if let Some(obj) = payload_json.as_object_mut() {
-                                                obj.insert("stream".to_string(), serde_json::json!(true));
-                                            }
-                                            let stream_payload = payload_json.to_string();
-
-                                            let mut req = client.post(&url).header("Content-Type", "application/json");
-                                            if let Some(b) = bearer { req = req.header("Authorization", format!("Bearer {b}")); }
-                                            let response = req.body(stream_payload).send().await;
-
-                                            match response {
-                                                Ok(mut res) => {
-                                                    let status = res.status().to_string();
-                                                    let mut first_token = true;
-                                                    let mut total_tokens = 0.0;
-                                                    let mut buffer = String::new();
-
-                                                    while let Ok(Some(chunk)) = res.chunk().await {
-                                                        if first_token {
-                                                            let ttft = start.elapsed().as_millis();
-                                                            let _ = tx_api.send(Event::ApiStreamStart { ttft_ms: ttft }).await;
-                                                            first_token = false;
-                                                        }
-                                                        buffer.push_str(&String::from_utf8_lossy(&chunk));
-                                                        while let Some(idx) = buffer.find('\n') {
-                                                            let line = buffer[..idx].trim().to_string();
-                                                            buffer = buffer[idx+1..].to_string();
-
-                                                            if let Some(data) = line.strip_prefix("data: ") {
-                                                                if data == "[DONE]" { continue; }
-                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
-                                                                    && let Some(content) = json.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
-                                                                        let clean_token = content.replace('\n', " ⏎ ");
-                                                                        let _ = tx_api.send(Event::ApiStreamChunk(clean_token)).await;
-                                                                        total_tokens += 1.0;
-                                                                    }
-                                                            }
-                                                        }
-                                                    }
-                                                    let total_time_s = start.elapsed().as_millis() as f64 / 1000.0;
-                                                    let gen_tps = if total_time_s > 0.0 { total_tokens / total_time_s } else { 0.0 };
-                                                    let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps, status }).await;
-                                                }
-                                                Err(e) => {
-                                                    let _ = tx_api.send(Event::ApiStreamChunk(format!("ERROR: {}", e))).await;
-                                                    let _ = tx_api.send(Event::ApiStreamEnd { eval_tps: 0.0, gen_tps: 0.0, status: "500".to_string() }).await;
-                                                }
-                                            }
-                                        });
+                                        // The interrogator goes through Saltnitor's own endpoint with the client key (REQ-TUI-007/AC1).
+                                        let control_port = app.control_port;
+                                        let bearer = app.client_bearer.clone();
+                                        tokio::spawn(interrogate::strike(control_port, bearer, payload, tx_api));
                                     }
                                     _ => {}
                                 }
@@ -1026,11 +973,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Event::ApiStreamChunk(token) => {
                         app.last_api_result.push_str(&token); // Paint it to the screen instantly
                     }
-                    Event::ApiStreamEnd { eval_tps, gen_tps, status } => {
-                        app.last_eval_tps = eval_tps;
-                        app.last_gen_tps = gen_tps;
+                    Event::ApiStreamEnd { metrics, status } => {
+                        let (ttft, pp, tg) = interrogate::render(&metrics);
+                        app.last_metrics = metrics;
                         let final_msg = format!("[{}] {}", status, app.last_api_result.chars().take(30).collect::<String>());
-                        app.add_log(format!("API Strike: {}ms | Gen: {:.1} t/s | {}", app.last_ttft, gen_tps, final_msg));
+                        app.add_log(format!("API Strike: {ttft} | {pp} | {tg} | {final_msg}"));
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
@@ -1105,7 +1052,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- NEW: Save History Buffer to Disk before exiting ---
     if !app.console_history.is_empty() {
         let history_content = app.console_history.join("\n");
-        let _ = std::fs::write(".saltnitor_history", history_content);
+        let path = interrogate::history_path(&|k| std::env::var(k).ok());
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(path, history_content);
     }
 
     // 6. Clean Teardown

@@ -4,10 +4,6 @@ use std::collections::HashMap;
 
 /// Defines all possible events that can trigger a state change or render.
 #[derive(Debug)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "Event is split per screen in P2 (T2.7)"
-)]
 pub enum Event {
     /// A hardware telemetry update from sysinfo/nvidia-smi
     HardwareUpdate {
@@ -42,8 +38,7 @@ pub enum Event {
     },
     ApiStreamChunk(String),
     ApiStreamEnd {
-        eval_tps: f64,
-        gen_tps: f64,
+        metrics: crate::interrogate::Metrics,
         status: String,
     },
 

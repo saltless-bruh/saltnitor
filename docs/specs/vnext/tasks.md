@@ -299,7 +299,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `src/main.rs`, `src/control_api.rs`
   - **Done when:** a test that occupies the control port beforehand sees a visible error event; no `unwrap`/`expect` remains on fallible paths (clippy `unwrap_used` denied); journal spawn failure → a status line, not a panic.
 
-- [ ] **T1.15 — Interrogator truthfulness**
+- [x] **T1.15 — Interrogator truthfulness**
   - **Reqs:** REQ-TUI-006, REQ-TUI-007
   - **Depends:** T1.11
   - **Files:** `src/main.rs` (interrogator), `src/app.rs`, `src/ui.rs`

@@ -589,20 +589,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             input_line.push(Span::raw(after));
         }
 
+        let (ttft, pp, tg) = crate::interrogate::render(&app.last_metrics);
         let console_text = vec![
             Line::from(input_line),
             Line::from(vec![
                 Span::styled(
-                    format!("[TTFT: {}ms] ", app.last_ttft),
+                    format!("{ttft} | "),
                     Style::default()
                         .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!(
-                        "[Eval: {:.1} t/s | Gen: {:.1} t/s] ",
-                        app.last_eval_tps, app.last_gen_tps
-                    ),
+                    format!("{pp} | {tg} "),
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
@@ -1107,7 +1105,7 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
     use std::collections::HashMap;
 
-    /// Fixed data; every host-dependent field is overwritten (history is read from the CWD in App::new).
+    /// Fixed data; every host-dependent field is overwritten (history is read from XDG state in App::new).
     fn fixture() -> App {
         let mut app = App::new(
             "Fixture CPU 8-Core".into(),

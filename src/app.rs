@@ -107,8 +107,10 @@ pub struct App {
     pub history_index: usize,
     pub last_api_result: String,
     pub last_ttft: u128,
-    pub last_eval_tps: f64,
-    pub last_gen_tps: f64,
+    /// Interrogator result: measured, estimated or `n/a` (REQ-TUI-006/007).
+    pub last_metrics: crate::interrogate::Metrics,
+    /// Port of Saltnitor's own endpoint; the interrogator goes through it (REQ-TUI-007/AC1).
+    pub control_port: u16,
 
     // --- Bottom Deck State ---
     pub bottom_tab_mode: u8, // 0: Interrogator, 1: Hot-Swap
@@ -147,7 +149,9 @@ impl App {
         let port_status = format!("Port {}: SCANNING...", port);
 
         let mut console_history = Vec::new();
-        if let Ok(content) = std::fs::read_to_string(".saltnitor_history") {
+        if let Ok(content) =
+            std::fs::read_to_string(crate::interrogate::history_path(&|k| std::env::var(k).ok()))
+        {
             for line in content.lines() {
                 if !line.trim().is_empty() {
                     console_history.push(line.to_string());
@@ -216,8 +220,8 @@ impl App {
             history_index,
             last_api_result: "Ready. Press 'i' to focus console, Enter to fire.".to_string(),
             last_ttft: 0,
-            last_eval_tps: 0.0,
-            last_gen_tps: 0.0,
+            last_metrics: crate::interrogate::Metrics::default(),
+            control_port: 8765,
 
             // --- Bottom Deck State ---
             bottom_tab_mode: 0,
