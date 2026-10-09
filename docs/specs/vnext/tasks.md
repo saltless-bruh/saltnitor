@@ -306,7 +306,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** send interrogator traffic through Saltnitor's own `/v1/chat/completions` (not the router port) with the configured client key, so it measures the real path; parse `timings` from the final SSE chunk.
   - **Done when:** a recorded SSE transcript with `timings` renders PP/TG from it; one without renders `n/a` or `est.`; history lives in `$XDG_STATE_HOME/saltnitor/history`.
 
-- [ ] **T1.16 — README, CHANGELOG, SECURITY truthfulness**
+- [x] **T1.16 — README, CHANGELOG, SECURITY truthfulness**
   - **Reqs:** REQ-DOC-001, REQ-DOC-003
   - **Depends:** T1.2, T1.6, T1.9, T1.11, T1.13, T1.15
   - **Files:** `README.md`, `CHANGELOG.md`, `SECURITY.md`, `docs/specs/vnext/evidence/claims.md`, `src/ui.rs` (tuner title)

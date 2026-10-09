@@ -1,40 +1,39 @@
 # Saltnitor
 
-**Saltnitor** is a high-performance, hardware-agnostic Terminal User Interface (TUI) built in Rust, serving as a central command center for orchestrating local Large Language Models (LLMs) and monitoring hybrid hardware pressure between GPU VRAM and System RAM.
+**Saltnitor** is a Terminal User Interface (TUI) built in Rust for Linux with NVIDIA GPUs, serving as a command center for orchestrating local Large Language Models (LLMs) and monitoring hybrid hardware pressure between GPU VRAM and System RAM.
 
-Designed specifically for developers running `llama.cpp` on Linux, Saltnitor provides real-time deep telemetry, intelligent log analysis, and tactical control in a single, ultra-lightweight binary. It also exposes an **OpenAI-compatible control endpoint**, so any IDE or AI coding agent that speaks the OpenAI chat API (Pi, OpenCode, Cline, Aider, Continue, …) can drive **automatic model hot-swaps** just by addressing different models.
+Designed for developers running `llama.cpp` on Linux, Saltnitor provides hardware telemetry, log viewing and service control in a single binary. It also exposes an **OpenAI-compatible control endpoint**, so any IDE or AI coding agent that speaks the OpenAI chat API (Pi, OpenCode, Cline, Aider, Continue, …) can drive **automatic model hot-swaps** just by addressing different models.
 
 <img width="1920" height="1001" alt="image" src="https://github.com/user-attachments/assets/0b3bd3de-f3aa-4d23-be48-bc446c76a1f1" />
 
 
 ## 🚀 Key Features
 
-- **Dynamic Hardware Probing & Telemetry**: Automatically identifies CPU architecture and NVIDIA GPU specifications on boot. Dynamically scales the UI to match your machine's thread count and memory limits, featuring real-time CPU load sparklines and precise VRAM/RAM saturation gauges.
+- **Hardware Telemetry**: Reads CPU and NVIDIA GPU specifications on boot (via `sysinfo` and `nvidia-smi`) and shows CPU load sparklines and VRAM/RAM saturation gauges. Linux and NVIDIA only.
 
-- **Tactical Hardware Inspectors**:
-    - **GPU Deep-Dive (`g`)**: Real-time VRAM allocation, core temperatures, wattage draw, and fan speeds. Includes an active process list to identify exactly which external applications are dominating your VRAM.
-        
-    - **CPU/System Deep-Dive (`c`)**: A balanced 60/40 UI split featuring inline `btop`-style gauges, a dynamic graphical equalizer showing load distribution across all physical/logical threads, and a deduplicated list of top RAM culprits.
+- **Hardware Inspectors**:
+    - **GPU Inspector (`g`)**: VRAM allocation, temperature, power draw and fan speed, plus the compute processes using VRAM (PID, user, RAM, VRAM).
 
+    - **CPU/System Inspector (`c`)**: Inline gauges, per-thread load bars and the top RAM processes (PID, user, RAM, VRAM).
+
+    - **Process control (`x` / `X`)**: In either inspector, `x` sends SIGTERM and escalates after `[process] term_grace_ms`; `X` asks `y/N` and then sends SIGKILL. Both act on the **exact PID** you selected (checked against its start time and owner, signalled through a pidfd). Nothing is ever killed by name, and PID 1, Saltnitor itself, the llama-server runtime processes and processes owned by other users are refused with a reason.
 
 - **Live Model Orchestration (Dual-Mode Bottom Deck)**:
-    - **Auto-Tuning Hot-Swap**: Cycle available `.gguf` models dynamically. Features an intelligent **VRAM Oracle** that heuristically estimates the footprint of a model and warns you of potential OOM crashes before you execute the swap.
-        
-    - **Deep Engine Tuner (`t`)**: A paginated configuration manifest that generates a native Linux `router.env` file and executes a bash-wrapper translation to control the `llama-server` runtime on the fly:
-        - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, micro-batching, parallel slots, Flash Attention, `mlock`, and exact KV Cache quantization algorithms (`q8_0`, `q4_0`, etc.).
-        - *Page 2 (Context & Speculation)*: RoPE scaling, VRAM defragmentation thresholds, and Speculative Decoding targets (`-md`).
-        - *Page 3 (Orchestration & Security)*: Core threading split (`-tb`), Continuous Batching, Context Shifting, and dynamic API Key authorization lock-downs.
+    - **Hot-Swap**: Cycle the available `.gguf` models. A **VRAM oracle** estimates the footprint (from the file name, or from `est_vram_gb` / `est_ram_gb` in the profile) and warns before you swap. It is an estimate: it does not yet account for VRAM held by other processes.
 
+    - **Router tuner (`t`)**: A paginated editor that writes the tuned flags into the active model's `[section]` of the `router.ini` named by `router_ini` in `config.toml`, then restarts the unit. Without `router_ini` the tuner refuses to apply. Only these keys are written: `ngl`, `ctx-size`, `batch-size`, `ubatch-size`, `threads`, `threads-batch`, `parallel`, `flash-attn`, `cache-type-k`, `cache-type-v`, `cont-batching`, `rope-freq-base`, `rope-freq-scale`, `defrag-thold`, `mlock`, `no-mmap`.
+        - *Page 1 (Compute & Memory)*: `ngl`, `ctx`, threads, batch, parallel slots, Flash Attention, `mlock`, `no_mmap`, KV cache types.
+        - *Page 2 (Context & Speculation)*: RoPE scaling, defrag threshold, and the draft-model controls. The draft-model controls are displayed but **not yet written** to `router.ini` (BD-17).
+        - *Page 3 (Orchestration)*: threads per batch, u-batch, continuous batching, plus context-shift, metrics and API Key toggles. Context shift and metrics are **not yet written** (BD-17). The API Key toggle only decides whether the interrogator sends the client key; it does not change the router.
 
-- **Advanced API Interrogator (`i`)**: A built-in mini-console for firing test payloads directly to your local inference server.
+- **API Interrogator (`i`)**: A mini-console that sends a request through Saltnitor's own endpoint (`http://127.0.0.1:<control_port>/v1/chat/completions`) with the client key.
+    - **Metrics**: Client-side time-to-first-token, and prompt / generation tokens-per-second taken from the runtime's `timings`. When the runtime sends no timings the rate is shown as an estimate (`est.`) or `n/a`, never as `0`.
+    - **Client key**: Set `client_key_env` to the name of an environment variable holding the key; the interrogator sends it as a Bearer token.
+    - **History**: The last 10 commands are saved on exit to `$XDG_STATE_HOME/saltnitor/history`, or `~/.local/state/saltnitor/history` when `XDG_STATE_HOME` is unset.
 
-    - **Granular Benchmarking**: Tracks millisecond-accurate Time-To-First-Token (TTFT) alongside precise, split Tokens-Per-Second (t/s) metrics for both **Prompt Evaluation** and **Generation**.
-    - **Immune to Self-Lockout**: Dynamically injects Bearer Authentication tokens if the daemon's API Key security wall is engaged.
-    - **Persistent Command History**: Bash-style history buffer with inline cursor editing, saved to `.saltnitor_history` on exit.
-
-- **Tactical Incident Response**:
-    - **Crash Dumping (`Ctrl+D`)**: Instantly export a post-mortem snapshot of your exact system state (VRAM/RAM pressure, temperatures, active model, and the last 100 log lines) to a timestamped file at `$HOME/saltnitor_crash_<timestamp>.txt`. The full path is printed to the log, and any write failure is reported (no more silent dumps to an unknown directory).
-    - **Kill-Switch (`Ctrl+K`)**: A dedicated emergency binding that **stops the `llama-router` unit** (`systemctl stop`). Because the service runs with `Restart=always`, a plain process kill is respawned within seconds — stopping the unit is what actually frees VRAM and keeps it down until you restart it (`Shift+S`).
+- **Incident Response**:
+    - **Crash Dump (`Ctrl+D`)**: Exports system state (VRAM/RAM pressure, temperatures, active model, last 100 log lines) to `$HOME/saltnitor_crash_<timestamp>.txt`. The path is printed to the log and write failures are reported. Configured tokens are redacted from the dump and from logs.
+    - **Kill-Switch (`Ctrl+K`)**: Runs `sudo -n systemctl stop <service>`. Because the service runs with `Restart=always`, a plain process kill is respawned within seconds; stopping the unit is what frees VRAM and keeps it down until you restart it (`Shift+S`).
 
 
 ## 🛠 Prerequisites
@@ -103,14 +102,30 @@ you ALL=(root) NOPASSWD: /usr/bin/systemctl start llama-router, \
 ```
 
 ### 3. Tell Saltnitor about the models in `config.toml`
-The control API reads this for the oracle. Profile keys **must match the `router.ini` section names**.
+Saltnitor reads `--config <path>`, else `$XDG_CONFIG_HOME/saltnitor/config.toml`, else `~/.config/saltnitor/config.toml`. The file is **strict**: a syntax error, a wrong type or an unknown key makes Saltnitor print the file, line, key and expectation and **exit with status 2**. It never falls back to defaults. CLI flags override the file. Profile keys **must match the `router.ini` section names**.
 
 ```toml
 control_port = 8765
 router_base  = "http://127.0.0.1:8080"
-infer_bearer = "<router api-key if the router runs with --api-key>"     # only needed if the router uses --api-key
+router_ini   = "/home/you/llama.cpp/router.ini"   # required for the tuner (Enter) to write anything
+infer_bearer = "<router api-key if the router runs with --api-key>"   # only if the router uses --api-key
 reserve_vram_gb = 0.8
 reserve_ram_gb  = 1.0
+
+# Secrets: prefer an environment variable or a private file over a literal in this file.
+control_token_env  = "SALTNITOR_TOKEN"            # name of the env var holding the control token ...
+# control_token_file = "/home/you/.config/saltnitor/token"   # ... or a file (mode 0600, owned by you)
+client_key_env     = "SALTNITOR_CLIENT_KEY"       # env var the interrogator sends as its Bearer key
+allow_query_token  = false                        # default; true re-enables ?token= on GET /v1/ensure/stream only
+max_body_bytes     = 33554432                     # request body limit (default 32 MiB)
+
+[timeouts]            # proxy to llama-server, in milliseconds (defaults shown)
+connect_ms    = 5000
+first_byte_ms = 600000
+idle_ms       = 120000   # max silence between streamed chunks
+
+[process]
+term_grace_ms = 5000     # SIGTERM -> escalation window for the `x` key
 
 [profiles.fast]
 model = "qwen3-9b-Q5_K_XL.gguf"
@@ -123,15 +138,17 @@ est_vram_gb = 9.0
 est_ram_gb  = 18.0
 ```
 
+Authentication: when a control token is configured, **every `/v1` route requires `Authorization: Bearer <token>`**. Failures are JSON error envelopes. Client credentials are never forwarded to llama-server (use `infer_bearer` for that). With no token configured the API is open on loopback only. See [SECURITY.md](./SECURITY.md).
+
 ### 4. Point your IDE/agent at an OpenAI-compatible base URL
 Use your **section names** as the model ids. Two endpoints are available:
 
 | Endpoint | URL | Behavior |
 |---|---|---|
-| **Through Saltnitor** (recommended) | `http://127.0.0.1:8765/v1` | Oracle-gated (refuses OOM loads); swap shown live in the TUI |
+| **Through Saltnitor** (recommended) | `http://127.0.0.1:8765/v1` | Oracle-gated (refuses loads it estimates will not fit); authenticated; responses are streamed through chunk by chunk; swap shown live in the TUI |
 | **Straight to the router** | `http://127.0.0.1:8080/v1` | Router auto-swaps; no oracle gate or TUI indicator |
 
-Set one agent/model to `fast` and another to `deep`, and **switching agents switches the model** — automatically. Ready-to-use configs for **Pi** and **OpenCode**, including a multi-agent "architect → scout" example that swaps models on delegation, are in [`integrations/`](./integrations/INTEGRATION.md).
+Set one agent/model to `fast` and another to `deep`, and **switching agents switches the model** — automatically. Point any OpenAI-compatible client at the base URL above and set its API key to your control token.
 
 ## ⌨️ Quick Reference
 
@@ -145,15 +162,16 @@ Set one agent/model to `fast` and another to `deep`, and **switching agents swit
 | `Enter` | Apply Tuner (write `router.ini` section + restart) / Fire Payload / Pin Model |
 | `i` | Focus Active Bottom Deck (Insert Mode) |
 | `Esc` | Exit Insert Mode |
-| `Up / Down` | Cycle History / Sniper Targets |
+| `Up / Down` | Cycle History / Inspector Process Selection |
 | `g` | Toggle GPU Hardware Inspector |
 | `c` | Toggle CPU/System Hardware Inspector |
-| `Shift + S/X/R` | Daemon Start / Stop / Restart |
+| `x` / `X` (in an inspector) | Terminate (SIGTERM, then escalate) / Kill (SIGKILL, `y/N` confirm) the selected PID |
+| `Shift + S/X/R` | Daemon Start / Stop / Restart (outside an inspector) |
 | `Ctrl+D` | Tactical Crash Dump (save state to `$HOME/saltnitor_crash_*.txt`) |
 | `Ctrl+K` | Tactical Kill-Switch (`systemctl stop llama-router`) |
 
 ## ⚠️ Important Notes
-- **Permission model**: Saltnitor uses `sudo -n` only for the three `systemctl` actions on `llama-router`. The recommended setup is the **sudoers drop-in** above, which lets you run the TUI as your normal user with no password prompts. Running the whole TUI with `sudo` also works but isn't necessary, and the service itself should run as your user (`User=<you>`), not root.
+- **Permission model**: Saltnitor uses `sudo -n` only for the three `systemctl` actions on the configured service (`llama-router` by default). The recommended setup is the **sudoers drop-in** above, which lets you run the TUI as your normal user with no password prompts. Running the whole TUI with `sudo` also works but isn't necessary, and the service itself should run as your user (`User=<you>`), not root.
 - **Model ids are your contract**: the id an agent sends must match a `router.ini` section name **and** a `[profiles.*]` key in `config.toml`. They are case-sensitive.
-- **First call to a cold model is slower** (that's the load + warmup); subsequent calls are instant. Pre-warm with the control API's `/v1/ensure` if you want to hide it.
+- **First call to a cold model is slower** (the load plus a one-token warm-up); later calls to the resident model skip it. Pre-warm with the control API's `/v1/ensure` if you want to hide it.
 - **Terminal Sizing Guardrails**: Saltnitor requires a minimum terminal footprint of 80x16. If the window is resized below this threshold, rendering will halt to prevent mathematical panics.

@@ -920,7 +920,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .block(
                 Block::default()
                     .title(format!(
-                        " Deep router.env Tuner [Page {}/3] ",
+                        " router.ini Tuner [Page {}/3] ",
                         app.tuner_page + 1
                     ))
                     .title_bottom(bottom_text)
