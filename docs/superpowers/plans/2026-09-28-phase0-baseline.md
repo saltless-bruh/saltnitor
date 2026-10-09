@@ -2445,7 +2445,7 @@ mod tests {
     #[test]
     fn sanitize_home_rewrites_only_real_home_paths() {
         assert_eq!(
-            sanitize_home(r#"path /home/laz/ai-models/x and /home/ alone and "/home/bob/q""#),
+            sanitize_home(r#"path /home/<user>/ai-models/x and /home/ alone and "/home/bob/q""#),
             r#"path ${HOME}/ai-models/x and /home/ alone and "${HOME}/q""#
         );
     }
@@ -3440,7 +3440,7 @@ exit $FAILED
 
 Run: `scripts/gate.sh G0; echo EXIT=$?` → rows 1, 2, 3, 4a, 4b, 6 PASS; 4, 5, 7, V MANUAL; `EXIT=0` (row 1 notes "no test-baseline.txt yet").
 Break row 2 deliberately: `echo '// x' >> src/app.rs; scripts/gate.sh G0 | grep '^| 2 '` → `FAIL`; then `git checkout -- src/app.rs` (app.rs has no test module, so restoring the whole file is safe); re-run → `PASS`.
-Break row 4b: `echo 'path=/home/laz/x' > tests/fixtures/leak.txt; scripts/gate.sh G0 | grep '^| 4b '` → `FAIL`; `rm tests/fixtures/leak.txt`.
+Break row 4b: `echo 'path=/home/<user>/x' > tests/fixtures/leak.txt; scripts/gate.sh G0 | grep '^| 4b '` → `FAIL`; `rm tests/fixtures/leak.txt`.
 Run: `scripts/gate.sh counts` → one line per suite, all counts > 0. `scripts/gate.sh G9; echo $?` → usage message, `2`.
 Run: `shellcheck -x scripts/gate.sh` → no output, exit 0. Fix findings in the script; a `# shellcheck disable=SCxxxx` needs a one-line reason on the same comment.
 

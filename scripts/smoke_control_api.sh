@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test_control_api.sh — smoke-test Saltnitor's control API + the llama.cpp router.
+# smoke_control_api.sh — smoke-test Saltnitor's control API + the llama.cpp router.
 # Run on the box with Saltnitor up (cargo run) and the router started. No root needed.
 # Adjust the four vars if you changed config.toml. `jq` is optional (falls back to raw).
 
 CTRL="http://127.0.0.1:8765"     # Saltnitor control API  (config: control_port)
 ROUTER="http://127.0.0.1:8080"   # llama.cpp router        (config: router_base)
-CTOKEN="sk-saltcode-local"       # config: control_token   (Bearer for /v1/ensure*)
-IBEARER="sk-saltnitor-2026"      # config: infer_bearer    (router api-key, only if set)
+CTOKEN="${SALTNITOR_CONTROL_TOKEN:?set SALTNITOR_CONTROL_TOKEN}"  # config: control_token   (Bearer for /v1/ensure*)
+IBEARER="${LLAMA_API_KEY:-}"  # config: infer_bearer    (router api-key, only if set)
 
 ok(){ printf '  \033[32mok\033[0m   %s\n' "$1"; }
 no(){ printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
@@ -32,8 +32,8 @@ RESP=$(curl -fsS -m 120 -X POST "$CTRL/v1/ensure" \
   -H "Authorization: Bearer $CTOKEN" -H "Content-Type: application/json" \
   -d '{"profile":"A_STD"}' 2>/dev/null)
 echo "$RESP" | pp
-echo "$RESP" | grep -qiE 'ready|resident|endpoint' && ok "A_STD reported resident" \
-  || no "ensure did not report ready (body above)"
+if echo "$RESP" | grep -qiE 'ready|resident|endpoint'; then ok "A_STD reported resident"
+else no "ensure did not report ready (body above)"; fi
 
 hr "5) real inference routes to it  (POST /v1/chat/completions, model=A_STD)"
 curl -fsS -m 120 -X POST "$ROUTER/v1/chat/completions" \

@@ -415,7 +415,7 @@ mod tests {
     #[test]
     fn sanitize_home_rewrites_only_real_home_paths() {
         assert_eq!(
-            sanitize_home(r#"path /home/laz/ai-models/x and /home/ alone and "/home/bob/q""#),
+            sanitize_home(r#"path /home/someone/ai-models/x and /home/ alone and "/home/bob/q""#), // invariants: allow home-path — sanitizer test input
             r#"path ${HOME}/ai-models/x and /home/ alone and "${HOME}/q""#
         );
     }

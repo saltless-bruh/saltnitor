@@ -205,7 +205,7 @@ if any `.route(` in `control_api::serve` or any `KeyCode::` arm in `main.rs` is 
 BD-02 gets T0.6 timings.
 
 **T0.8** — `known-good.ini` from the live `~/ai-models/llama.cpp/router.ini` (read-only):
-`/home/laz/…` → `${MODELS_DIR}/…`, hosts and keys → placeholders. `readme-example.ini` from
+`/home/<user>/…` → `${MODELS_DIR}/…`, hosts and keys → placeholders. `readme-example.ini` from
 README. Check: `grep -n "/home/" tests/fixtures/router/*` shows only placeholders.
 
 **T0.9** — files already moved in T0.1; run `--sync`, make `--tests --phase P0` pass with the tags

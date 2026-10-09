@@ -235,7 +235,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** implement every REQ-CI-008/AC1 rule with remediation messages; seed the ratchet with today's violations; fail on anything new; wire it into CI.
   - **Done when:** CI runs it; a new violation on a scratch branch fails with a remediation message.
 
-- [ ] **T1.6 — Remove hardcoded credentials and paths**
+- [x] **T1.6 — Remove hardcoded credentials and paths**
   - **Reqs:** REQ-SEC-013, REQ-REPO-004, REQ-REPO-005, REQ-DOC-004
   - **Depends:** T1.5
   - **Files:** `src/main.rs`, `examples/external-mode/launch_router.sh` (moved), `scripts/smoke_control_api.sh` (moved)

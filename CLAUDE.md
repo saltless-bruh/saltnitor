@@ -69,9 +69,9 @@ python3 -m unittest discover -s docs/specs/vnext/tools        # spec_lint self-t
 ```
 
 These arrive with their tasks: `scripts/check-invariants.sh` (T1.5), `scripts/gate.sh G<n>` (T0.10), `cargo test -p fake-llama-server` (T0.4), and `cargo test --features hardware-tests -- --ignored` (reference host only).
-`test_control_api.sh` smoke-tests the **live** router and control API. It is a manual tool, never a test.
+`scripts/smoke_control_api.sh` smoke-tests the **live** router and control API. It is a manual tool, never a test.
 
-**Context discipline (context-mode).** Build, test, clippy, and lint output is large. Run it through `ctx_execute` / `ctx_batch_execute` (concurrency 1, since cargo holds a lock), then filter with `ctx_search`. Don't trim with `| head` or `| tail` inside the command, because those lines never get indexed. Use `Read` only on a file you are about to edit. Files outside `/home/laz/saltnitor` (live `router.ini`, systemd unit, `config.toml`) are refused by `ctx_execute_file` unless a `Read(...)` allow rule exists.
+**Context discipline (context-mode).** Build, test, clippy, and lint output is large. Run it through `ctx_execute` / `ctx_batch_execute` (concurrency 1, since cargo holds a lock), then filter with `ctx_search`. Don't trim with `| head` or `| tail` inside the command, because those lines never get indexed. Use `Read` only on a file you are about to edit. Files outside the repo root (live `router.ini`, systemd unit, `config.toml`) are refused by `ctx_execute_file` unless a `Read(...)` allow rule exists.
 
 ---
 
@@ -158,7 +158,7 @@ These need a human. **Write a `BLOCKED:` entry and stop.** Do not improvise.
 
 - Any `[HW]` step (needs the reference host and GPU) or `[HUMAN]` step (operator action or sign-off). Never tick one yourself, and never write `Verdict: PASSED` on a gate.
 - The **live system outside this repo**. Read it for context, but never modify it from code or tests:
-  `~/ai-models/llama.cpp/` (llama-server build, live `router.ini`, `launch_router.sh`, models) · `/etc/systemd/system/llama-router.service` · `/etc/sudoers.d/saltnitor` · `~/.config/saltnitor/config.toml` · `~/ai-runtimes/*` (future runtime channels, built by the operator only).
+  `~/ai-models/llama.cpp/` (llama-server build, live `router.ini`, `examples/external-mode/launch_router.sh`, models) · `/etc/systemd/system/llama-router.service` · `/etc/sudoers.d/saltnitor` · `~/.config/saltnitor/config.toml` · `~/ai-runtimes/*` (future runtime channels, built by the operator only).
 - New crates outside the policy (REQ-ARCH-008), public API or config-key changes the task doesn't describe, destructive git operations, and anything blocked by an open `OQ-*`.
 - Security design beyond what `REQ-SEC-*` specifies.
 
@@ -192,7 +192,7 @@ When an AC is ambiguous, ask. A wrong interpretation implemented confidently cos
 - **The "streaming" proxy buffers.** `h_chat` calls `resp.bytes().await`, so the whole response arrives at once (BD-02). axum's 2 MB body limit also applies (BD-24).
 - **The resident fast path may never fire.** `router_loaded()` reads `loaded`/`state`/`status`, but current router builds report `"status":{"value":"loaded"}` (BD-32, suspected). Confirm it with a captured fixture.
 - **The TUI hot-swap bypasses the oracle.** The TUI calls the router directly with an NGL guessed from the filename (BD-19). The oracle ignores external VRAM use (BD-13).
-- **The tuner edits the live runtime.** It rewrites the hardcoded `/home/laz/ai-models/llama.cpp/router.ini` in place, then runs `sudo -n systemctl restart` (BD-06, BD-25). Some tuner keys are never written (BD-17).
+- **The tuner edits the live runtime.** It rewrites the file named by the configured `router_ini` in place, then runs `sudo -n systemctl restart` (BD-06, BD-25). Some tuner keys are never written (BD-17).
 - **Router preset keys are whitelisted per build.** Per-model `ctx-size`/`ngl`/`override-tensor` may be silently ignored. Trust fixtures captured from the actual binary, not READMEs (REQ-RT-005).
 - **No lease means mid-stream eviction.** A request for B evicts A while A is streaming (BD-23). This is fixed in P6, not before.
 - **Running under `sudo` leaks root-owned files.** The history file is written relative to CWD and crash dumps go to `$HOME` (BD-21).

@@ -41,7 +41,7 @@ Designed specifically for developers running `llama.cpp` on Linux, Saltnitor pro
 - **OS**: Linux (Optimized for Pop!_OS / Ubuntu / Arch).
 - **Systemd**: Required for log streaming and service management.
 - **NVIDIA Drivers**: Required for GPU telemetry (via `nvidia-smi`).
-- **llama.cpp**: A build whose `llama-server` supports the native router (`--models-preset`), orchestrated via the `launch_router.sh` bash wrapper.
+- **llama.cpp**: A build whose `llama-server` supports the native router (`--models-preset`), orchestrated via the `launch_router.sh` bash wrapper (example in `examples/external-mode/`).
 
 ## 📦 Installation & Setup
 
@@ -108,7 +108,7 @@ The control API reads this for the oracle. Profile keys **must match the `router
 ```toml
 control_port = 8765
 router_base  = "http://127.0.0.1:8080"
-infer_bearer = "sk-saltnitor-2026"     # only needed if the router uses --api-key
+infer_bearer = "<router api-key if the router runs with --api-key>"     # only needed if the router uses --api-key
 reserve_vram_gb = 0.8
 reserve_ram_gb  = 1.0
 

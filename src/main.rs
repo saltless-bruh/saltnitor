@@ -57,6 +57,10 @@ struct TomlConfig {
     control_token: Option<String>,
     router_base: Option<String>,
     infer_bearer: Option<String>,
+    /// Path of the router preset INI the tuner edits (REQ-SEC-013). Unset: tuner refuses to apply.
+    router_ini: Option<String>,
+    /// Name of the env var holding the bearer the TUI sends on its own calls (REQ-SEC-013).
+    client_key_env: Option<String>,
     reserve_vram_gb: Option<f64>,
     reserve_ram_gb: Option<f64>,
     #[serde(default)]
@@ -110,6 +114,14 @@ fn check_dependencies() -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The bearer the TUI sends on its own HTTP calls: read from the env var named by
+/// `client_key_env` (REQ-SEC-013). Never a literal, never logged.
+fn client_bearer(env_name: Option<&str>) -> Option<String> {
+    env_name
+        .and_then(|n| std::env::var(n).ok())
+        .filter(|v| !v.is_empty())
 }
 
 /// Upsert `kv` into the `[section]` block of an INI string, preserving every other
@@ -239,6 +251,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_ngl,
         final_ctx,
     );
+    app.router_ini = toml_conf.router_ini.clone();
+    app.client_bearer = client_bearer(toml_conf.client_key_env.as_deref());
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
     // --- Headless Control API (Saltcode native-router bridge) ---
@@ -607,6 +621,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let section = app.active_model.clone();
                                     if section.is_empty() || section == "None" {
                                         app.add_log(">>> TUNER: no active model - select one in the Hot-Swap deck (Tab) before applying.".to_string());
+                                    } else if app.router_ini.is_none() {
+                                        app.add_log(">>> TUNER: refusing to apply — set `router_ini` in config.toml (REQ-SEC-013, DEC-04)".to_string());
                                     } else {
                                         let cache_types = ["f16", "f32", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"];
                                         let mut kv: Vec<(String, String)> = vec![
@@ -631,13 +647,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         app.add_log(format!(">>> TUNER: writing {} keys to [{}] in router.ini...", kv.len(), section));
                                         app.show_tuner = false;
                                         let svc_name = app.service_name.clone();
+                                        let router_ini = app.router_ini.clone().unwrap_or_default();
                                         let tx_t = tx.clone();
                                         tokio::spawn(async move {
-                                            const ROUTER_INI: &str = "/home/laz/ai-models/llama.cpp/router.ini";
-                                            match tokio::fs::read_to_string(ROUTER_INI).await {
+                                            let router_ini_path = router_ini.as_str();
+                                            match tokio::fs::read_to_string(router_ini_path).await {
                                                 Ok(content) => match upsert_ini_section(&content, &section, &kv) {
                                                     Some(updated) => {
-                                                        if tokio::fs::write(ROUTER_INI, updated).await.is_ok() {
+                                                        if tokio::fs::write(router_ini_path, updated).await.is_ok() {
                                                             let _ = tx_t.send(Event::LogLine(format!(">>> TUNER: [{}] updated. Restarting router...", section))).await;
                                                             let out = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc_name]).output().await;
                                                             match out {
@@ -645,12 +662,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                                 _ => { let _ = tx_t.send(Event::LogLine(">>> TUNER ERROR: restart failed (sudoers for 'systemctl restart'? check journalctl).".to_string())).await; }
                                                             }
                                                         } else {
-                                                            let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot write {}", ROUTER_INI))).await;
+                                                            let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot write {}", router_ini_path))).await;
                                                         }
                                                     }
                                                     None => { let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: section [{}] not found in router.ini", section))).await; }
                                                 },
-                                                Err(_) => { let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot read {}", ROUTER_INI))).await; }
+                                                Err(_) => { let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot read {}", router_ini_path))).await; }
                                             }
                                         });
                                     }
@@ -704,7 +721,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 let host_api = app.host.clone();
                                                 let port_api = app.port;
                                                 let warmup_model = chosen_model.clone();
-                                                let use_api_key = app.api_key;
+                                                let bearer = if app.api_key { app.client_bearer.clone() } else { None };
                                                 let tx_warmup = tx.clone();
                                                 tokio::spawn(async move {
                                                     let client = reqwest::Client::new();
@@ -713,7 +730,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     let mut req = client.post(&url)
                                                         .header("Content-Type", "application/json")
                                                         .timeout(std::time::Duration::from_secs(120));
-                                                    if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
+                                                    if let Some(b) = bearer { req = req.header("Authorization", format!("Bearer {b}")); }
                                                     match req.body(payload).send().await {
                                                         Ok(res) if res.status().is_success() => {
                                                             let _ = tx_warmup.send(Event::ActiveModelSet(warmup_model.clone())).await;
@@ -784,7 +801,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let host_api = app.host.clone();
                                         let port_api = app.port;
 
-                                        let use_api_key = app.api_key;
+                                        let bearer = if app.api_key { app.client_bearer.clone() } else { None };
                                         tokio::spawn(async move {
                                             let client = Client::new();
                                             let start = Instant::now();
@@ -797,7 +814,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let stream_payload = payload_json.to_string();
 
                                             let mut req = client.post(&url).header("Content-Type", "application/json");
-                                            if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
+                                            if let Some(b) = bearer { req = req.header("Authorization", format!("Bearer {b}")); }
                                             let response = req.body(stream_payload).send().await;
 
                                             match response {
@@ -1046,7 +1063,7 @@ mod tests {
     // tests may unwrap: a panic is the failure signal (REQ-CI-007 scopes the deny to non-test code)
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::upsert_ini_section;
+    use super::{client_bearer, upsert_ini_section};
 
     fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -1120,5 +1137,18 @@ mod tests {
             upsert_ini_section(ini, "B", &kv(&[("n", "7")])).as_deref(),
             Some("[A]\nk = 1\n[B]\nn = 7\n[C]\nn = 3\n")
         );
+    }
+
+    /// Verifies: REQ-SEC-013/AC1
+    #[test]
+    fn client_bearer_comes_only_from_the_named_env_var() {
+        // SAFETY (test): single-threaded access to this unique variable name.
+        unsafe { std::env::set_var("SALTNITOR_T16_KEY", "k-from-env") };
+        assert_eq!(
+            client_bearer(Some("SALTNITOR_T16_KEY")).as_deref(),
+            Some("k-from-env")
+        );
+        assert_eq!(client_bearer(Some("SALTNITOR_T16_MISSING")), None);
+        assert_eq!(client_bearer(None), None);
     }
 }

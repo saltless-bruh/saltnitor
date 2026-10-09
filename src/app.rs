@@ -80,6 +80,10 @@ pub struct App {
     pub ctx_shift: bool,
     pub metrics: bool,
     pub api_key: bool,
+    /// Router preset INI the tuner edits; `None` makes the tuner refuse (REQ-SEC-013).
+    pub router_ini: Option<String>,
+    /// Bearer from the env var named by `client_key_env`; never a literal (REQ-SEC-013).
+    pub client_bearer: Option<String>,
 
     // Help Menu State
     pub show_help: bool,
@@ -186,6 +190,8 @@ impl App {
             ctx_shift: true,
             metrics: false,
             api_key: false,
+            router_ini: None,
+            client_bearer: None,
             draft_model_idx: 0,
             console_focused: false,
             console_input:
