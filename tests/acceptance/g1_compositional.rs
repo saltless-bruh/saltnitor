@@ -78,15 +78,19 @@ async fn auth_then_request_id_then_streaming_then_cancellation_in_one_flow() {
         "step 2: first and last chunk arrived {:?} apart; the body was buffered",
         last_after - first_after
     );
-    let upstream_requests = stack.fake.recorder.of_kind("request");
+    // CR-9: ensure() may probe GET /v1/models for residency first (REQ-MIG-007/AC1); the
+    // oracle counts chat requests only, so it tests the spec, not the polling strategy.
+    let chat: Vec<_> = stack
+        .fake
+        .recorder
+        .of_kind("request")
+        .into_iter()
+        .filter(|r| r["method"] == "POST" && r["path"] == "/v1/chat/completions")
+        .collect();
+    assert_eq!(chat.len(), 1, "step 2: chat requests {chat:?}");
     assert_eq!(
-        upstream_requests.len(),
-        1,
-        "step 2: upstream requests {upstream_requests:?}"
-    );
-    assert_eq!(
-        upstream_requests[0]["headers"]["x-request-id"], REQUEST_ID,
-        "step 2: the request ID was not forwarded upstream: {upstream_requests:?}"
+        chat[0]["headers"]["x-request-id"], REQUEST_ID,
+        "step 2: the request ID was not forwarded upstream: {chat:?}"
     );
 
     // 3. generated request ID
@@ -110,6 +114,10 @@ async fn auth_then_request_id_then_streaming_then_cancellation_in_one_flow() {
 
     // 4. cancellation
     let _ = tokio::time::timeout(Duration::from_millis(1500), resp.chunk()).await;
+    assert!(
+        stack.fake.recorder.of_kind("disconnect").is_empty(),
+        "step 4: a disconnect was recorded before the client dropped (CR-9: the step must not pass vacuously)"
+    );
     drop(resp);
     assert!(
         stack

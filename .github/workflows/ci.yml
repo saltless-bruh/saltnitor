@@ -68,8 +68,7 @@ jobs:
       - run: python3 -m unittest discover -s docs/specs/vnext/tools
 
   acceptance:
-    runs-on: ubuntu-latest
-    continue-on-error: true   # informational until G1 (T1.0 Do)
+    runs-on: ubuntu-latest   # blocking since CR-9 (G1 rows 2–3): the suite is the oracle
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0

@@ -149,17 +149,32 @@ row_repo_hygiene() {
 }
 
 # shellcheck disable=SC2329  # invoked indirectly: passed by name to run_row
-row_tests_not_weakened() { # since $1: every commit touching tests/ or snapshots carries Protected-change:
+row_tests_not_weakened() { # since $1 (CR-8, CR-10): a Protected-change: trailer is required on every commit that
+  # CHANGES a protected test or snapshot (tests/acceptance, tests/fixtures, **/snapshots/**: any status) or
+  # modifies/deletes/renames an existing file elsewhere under tests/. A commit that only ADDS its own
+  # tests under tests/*.rs needs no trailer (CR-3 does not protect them).
   local since=$1 bad=0 c
   while read -r c; do
     [[ -n $c ]] || continue
-    if git show -s --format=%B "$c" | grep -q '^Protected-change:'; then
+    local needs=0
+    while IFS=$'\t' read -r status path _; do
+      [[ -n $status ]] || continue
+      case "$path" in
+        tests/acceptance/*|tests/fixtures/*|*/snapshots/*) needs=1 ;;
+        tests/*) [[ ${status:0:1} == A ]] || needs=1 ;;
+      esac
+    done < <(git show --format= --name-status "$c" -- tests ':(glob)**/snapshots/**')
+    if [[ $needs -eq 0 ]]; then
+      echo "add  $(git show -s --format='%h %s' "$c") (adds its own tests only; no trailer required)"
+    elif git show -s --format=%B "$c" | grep -q '^Protected-change:'; then
       echo "ok   $(git show -s --format='%h %s' "$c")"
     else
       echo "MISSING trailer: $(git show -s --format='%h %s' "$c")"; bad=1
     fi
   done < <(git log --format=%H "$since..HEAD" -- tests ':(glob)**/snapshots/**')
   git diff --stat "$since" HEAD -- tests ':(glob)**/snapshots/**'
+  echo "# src/ commits touching assertions since $since (informational; operator judgement, CR-8):"
+  git log --format='  %h %s' -G'assert' "$since..HEAD" -- src ':!src/snapshots'
   return "$bad"
 }
 
@@ -170,7 +185,7 @@ gate_g1() {
   run_row 3 "Compositional scenario" cargo test --test acceptance --locked g1_compositional
   run_row 4 "Invariant scan + empty baseline" row_invariants_clean
   run_row 5 "Repository hygiene (T1.1/T1.2)" row_repo_hygiene
-  run_row 6a "Tests not weakened: Protected-change trailer on every tests/ or snapshot commit" row_tests_not_weakened "$g0"
+  run_row 6a "Tests not weakened: Protected-change trailer on every commit that changes a protected test/snapshot or an existing test (CR-10)" row_tests_not_weakened "$g0"
   add_row 6 "Tests not weakened" MANUAL "operator approves the row-6a list in evidence/G1.md (CR-8)"
   run_row 7 "Traceability" python3 "$TOOLS/spec_lint.py" --tests --phase P1
   add_row D1 "Real streaming" MANUAL "binary + fake runtime slow-stream; curl -N through :8765 with ts timestamps: chunks arrive incrementally"
