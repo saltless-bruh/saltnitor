@@ -228,7 +228,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Files:** `.github/workflows/release.yml`
   - **Done when:** a `workflow_dispatch` dry run produces the binary and `SHA256SUMS` without `actions/upload-release-asset@v1`.
 
-- [ ] **T1.5 — Invariant scan with ratchet**
+- [x] **T1.5 — Invariant scan with ratchet**
   - **Reqs:** REQ-CI-008/AC1, REQ-CI-008/AC2, REQ-CI-008/AC3, REQ-REPO-004, REQ-REPO-005, REQ-PROC-006
   - **Depends:** T1.3
   - **Files:** `scripts/check-invariants.sh`, `scripts/invariants-baseline.txt`
