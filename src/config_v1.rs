@@ -427,6 +427,96 @@ fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Pure check behind REQ-SEC-003/AC2: regular file, no group/other bits, owned by us.
+pub fn validate_key_file(
+    is_file: bool,
+    mode: u32,
+    owner_uid: u32,
+    my_uid: u32,
+) -> Result<(), String> {
+    if !is_file {
+        return Err("not a regular file".to_string());
+    }
+    if mode & 0o077 != 0 {
+        return Err(format!(
+            "mode {:04o} is readable by group or others; chmod 600",
+            mode & 0o7777
+        ));
+    }
+    if owner_uid != my_uid {
+        return Err(format!(
+            "owned by uid {owner_uid}, not the daemon user {my_uid}"
+        ));
+    }
+    Ok(())
+}
+
+/// Exactly one of `control_token` (deprecated literal), `control_token_env`, `control_token_file`.
+pub fn resolve_control_token(
+    cfg: &ConfigV1,
+    env: Env,
+    notes: &mut Vec<String>,
+) -> Result<Option<String>, ConfigError> {
+    let err = |key: &str, expected: &str, found: String| ConfigError {
+        file: PathBuf::from("config.toml"),
+        line: None,
+        col: None,
+        key: key.into(),
+        expected: expected.into(),
+        found,
+        hint: None,
+    };
+    let set = [
+        cfg.control_token.is_some(),
+        cfg.control_token_env.is_some(),
+        cfg.control_token_file.is_some(),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count();
+    if set > 1 {
+        return Err(err(
+            "control_token",
+            "exactly one of control_token, control_token_env, control_token_file",
+            format!("{set} set"),
+        ));
+    }
+    if let Some(t) = &cfg.control_token {
+        notes.push("control_token: a literal secret in config.toml is deprecated; use control_token_env or control_token_file (REQ-SEC-003)".to_string());
+        return Ok(Some(t.clone()));
+    }
+    if let Some(name) = &cfg.control_token_env {
+        let v = env(name).filter(|v| !v.is_empty()).ok_or_else(|| {
+            err(
+                "control_token_env",
+                "an environment variable with a value",
+                format!("{name} is unset or empty"),
+            )
+        })?;
+        return Ok(Some(v));
+    }
+    if let Some(path) = &cfg.control_token_file {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(path)
+            .map_err(|e| err("control_token_file", "a readable file", e.to_string()))?;
+        let my_uid = rustix::process::geteuid().as_raw();
+        validate_key_file(meta.is_file(), meta.mode(), meta.uid(), my_uid)
+            .map_err(|m| err("control_token_file", "a private key file", m))?;
+        let v = std::fs::read_to_string(path)
+            .map_err(|e| err("control_token_file", "a readable file", e.to_string()))?;
+        let v = v.trim_end_matches(['\n', '\r']).to_string();
+        if v.is_empty() {
+            return Err(err(
+                "control_token_file",
+                "a non-empty token",
+                "empty file".to_string(),
+            ));
+        }
+        return Ok(Some(v));
+    }
+    Ok(None)
+}
+
 /// The bearer the TUI sends on its own HTTP calls, from the env var named by `client_key_env`
 /// (REQ-SEC-013). Never a literal, never logged. (Moved here from `main.rs`, T1.6.)
 pub fn client_bearer(env_name: Option<&str>) -> Option<String> {

@@ -264,7 +264,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** a policy table (Appendix A subset) plus one default-deny middleware layer; bearer-only by default; `allow_query_token` compat for `GET /v1/ensure/stream`; constant-time compare (`subtle`); rate-limited failed-auth logs; no CORS headers.
   - **Done when:** `tests/auth_policy.rs` enumerates the router's routes and asserts each outcome (REQ-SEC-001/AC2–AC3, REQ-SEC-005/AC2).
 
-- [ ] **T1.10 — Secret sourcing and redaction**
+- [x] **T1.10 — Secret sourcing and redaction**
   - **Reqs:** REQ-SEC-003/AC1, REQ-SEC-003/AC2, REQ-SEC-003/AC4, REQ-SEC-006/AC1
   - **Depends:** T1.9, T1.7
   - **Files:** `src/auth.rs`, `src/config_v1.rs`, `tests/secrets.rs`

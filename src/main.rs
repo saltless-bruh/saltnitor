@@ -14,7 +14,7 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use reqwest::Client;
-use saltnitor::{app, config_v1, control_api, events, ui};
+use saltnitor::{app, auth, config_v1, control_api, events, ui};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -144,8 +144,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for n in &loaded.notes {
         eprintln!("saltnitor: {n}"); // REQ-CFG-001/AC2
     }
-    let config_notes = loaded.notes.clone();
+    let mut config_notes = loaded.notes.clone();
     let toml_conf = loaded.config;
+    let mut token_notes = Vec::new();
+    let control_token = match config_v1::resolve_control_token(
+        &toml_conf,
+        &|k| std::env::var(k).ok(),
+        &mut token_notes,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("saltnitor: invalid config (CONFIG_INVALID)\n{e}");
+            std::process::exit(2); // REQ-SEC-003/AC2
+        }
+    };
+    for n in &token_notes {
+        eprintln!("saltnitor: {n}");
+    }
+    config_notes.extend(token_notes);
 
     // 1. Load Configuration
     let final_port = cli.port.or(toml_conf.port).unwrap_or(8080);
@@ -229,6 +245,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     app.router_ini = toml_conf.router_ini.clone();
     app.client_bearer = config_v1::client_bearer(toml_conf.client_key_env.as_deref());
+    app.redactor = auth::Redactor::new(
+        [
+            control_token.clone(),
+            toml_conf.infer_bearer.clone(),
+            app.client_bearer.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    );
     for n in &config_notes {
         app.add_log(format!(">>> CONFIG: {n}"));
     }
@@ -246,7 +272,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .clone()
                     .unwrap_or_else(|| format!("http://{}:{}", final_host, final_port)),
                 toml_conf.infer_bearer.clone(),
-                toml_conf.control_token.clone(),
+                control_token.clone(),
                 toml_conf.reserve_vram_gb.unwrap_or(0.8),
                 toml_conf.reserve_ram_gb.unwrap_or(1.0),
                 tx.clone(),
@@ -909,22 +935,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                                     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
                                     let path = format!("{}/saltnitor_crash_{}.txt", home, timestamp);
-                                    let active_model = app.active_model.clone();
-                                    let vram_used = app.vram_used;
-                                    let vram_total = app.vram_total;
-                                    let ram_used = app.ram_used;
-                                    let ram_total = app.ram_total;
-                                    let gpu_temp = app.gpu_temp;
-                                    let gpu_power = app.gpu_power.clone();
-                                    let cpu_load = app.cpu_history.last().copied().unwrap_or(0);
-                                    let logs: Vec<String> = app.logs.iter().cloned().collect();
+                                    let content = app.crash_dump_text(&timestamp);
                                     app.add_log(format!(">>> CRASH DUMP -> {}", path));
                                     let tx_d = tx.clone();
                                     tokio::spawn(async move {
                                         use tokio::io::AsyncWriteExt;
-                                        let mut content = String::new();
-                                        content.push_str(&format!("--- SALTNITOR CRASH DUMP [{}] ---\n\nTARGET MODEL: {}\nVRAM USAGE:   {:.2} / {:.2} GB\nRAM USAGE:    {:.2} / {:.2} GB\nGPU TEMP:     {} C\nGPU POWER:    {}\nCPU LOAD:     {}%\n\n--- RECENT LOGS ---\n", timestamp, active_model, vram_used, vram_total, ram_used, ram_total, gpu_temp, gpu_power, cpu_load));
-                                        for log in logs { content.push_str(&format!("{}\n", log)); }
                                         match tokio::fs::File::create(&path).await {
                                             Ok(mut file) => {
                                                 if file.write_all(content.as_bytes()).await.is_ok() {

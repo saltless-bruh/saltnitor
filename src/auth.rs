@@ -11,6 +11,36 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use subtle::ConstantTimeEq;
 
+/// Removes known secret values and credential-shaped substrings from a log line (REQ-SEC-006/AC1).
+#[derive(Debug, Clone, Default)]
+pub struct Redactor {
+    secrets: Vec<String>,
+    bearer: Option<regex::Regex>,
+    query: Option<regex::Regex>,
+}
+impl Redactor {
+    pub fn new(secrets: Vec<String>) -> Self {
+        Self {
+            secrets: secrets.into_iter().filter(|s| !s.is_empty()).collect(),
+            bearer: regex::Regex::new(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+").ok(),
+            query: regex::Regex::new(r"([?&]token=)[^&\s]+").ok(),
+        }
+    }
+    pub fn redact(&self, line: &str) -> String {
+        let mut out = line.to_string();
+        for s in &self.secrets {
+            out = out.replace(s, "<redacted>");
+        }
+        if let Some(re) = &self.bearer {
+            out = re.replace_all(&out, "${1}<redacted>").into_owned();
+        }
+        if let Some(re) = &self.query {
+            out = re.replace_all(&out, "${1}<redacted>").into_owned();
+        }
+        out
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Auth {
     Public,

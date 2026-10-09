@@ -22,6 +22,7 @@ serde_path_to_error = "0.1"   # dotted key path in config diagnostics (REQ-CFG-0
 axum = "0.8"            # default features include json + tokio + query (all needed)
 tokio-stream = "0.1"    # ReceiverStream + StreamExt for the /v1/ensure/stream SSE body
 subtle = "2"            # constant-time token comparison (REQ-SEC-004); BSD-3-Clause
+rustix = { version = "1", features = ["process"] }   # geteuid for key-file ownership (REQ-SEC-003), pidfd in T1.13; Apache-2.0/MIT, already transitive via crossterm
 
 [workspace]
 members = ["tools/fake-llama-server"]

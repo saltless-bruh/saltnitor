@@ -84,6 +84,8 @@ pub struct App {
     pub router_ini: Option<String>,
     /// Bearer from the env var named by `client_key_env`; never a literal (REQ-SEC-013).
     pub client_bearer: Option<String>,
+    /// Scrubs secrets from every log line and crash dump (REQ-SEC-006/AC1).
+    pub redactor: crate::auth::Redactor,
 
     // Help Menu State
     pub show_help: bool,
@@ -192,6 +194,7 @@ impl App {
             api_key: false,
             router_ini: None,
             client_bearer: None,
+            redactor: crate::auth::Redactor::default(),
             draft_model_idx: 0,
             console_focused: false,
             console_input:
@@ -229,6 +232,7 @@ impl App {
     }
 
     pub fn add_log(&mut self, log: String) {
+        let log = self.redactor.redact(&log);
         if self.logs.len() == 100 {
             self.logs.pop_front();
         }
@@ -237,6 +241,28 @@ impl App {
             self.log_state
                 .select(Some(self.logs.len().saturating_sub(1)));
         }
+    }
+
+    /// Crash-dump body written by Ctrl+D; logs are already redacted by `add_log`.
+    pub fn crash_dump_text(&self, timestamp: &str) -> String {
+        let cpu_load = self.cpu_history.last().copied().unwrap_or(0);
+        let mut content = format!(
+            "--- SALTNITOR CRASH DUMP [{}] ---\n\nTARGET MODEL: {}\nVRAM USAGE:   {:.2} / {:.2} GB\nRAM USAGE:    {:.2} / {:.2} GB\nGPU TEMP:     {} C\nGPU POWER:    {}\nCPU LOAD:     {}%\n\n--- RECENT LOGS ---\n",
+            timestamp,
+            self.active_model,
+            self.vram_used,
+            self.vram_total,
+            self.ram_used,
+            self.ram_total,
+            self.gpu_temp,
+            self.gpu_power,
+            cpu_load
+        );
+        for log in &self.logs {
+            content.push_str(&self.redactor.redact(log));
+            content.push('\n');
+        }
+        content
     }
 
     pub fn scroll_logs_up(&mut self) {
