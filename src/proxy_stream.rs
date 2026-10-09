@@ -1,0 +1,304 @@
+//! Streaming proxy core (REQ-PRX-002…005, REQ-PRX-008…011, REQ-PRX-017/018, REQ-SEC-012; INV-01,
+//! INV-08). Bytes in, bytes out: the body is never parsed into a value, never re-serialized, and
+//! never buffered (no whole-body read helper of the HTTP client is called in this file —
+//! REQ-PRX-002/AC3, mechanised by `tests/proxy_streaming.rs`).
+use crate::config_v1::{DEFAULT_MAX_BODY_BYTES, Timeouts};
+use crate::error::{ApiError, ErrorCode};
+use axum::body::{Body, Bytes};
+use axum::extract::Request;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
+use std::pin::Pin;
+use std::sync::LazyLock;
+use std::task::{Context, Poll};
+use std::time::Duration;
+use tokio_stream::Stream;
+
+#[derive(Debug, Clone, Copy)]
+pub struct ProxyLimits {
+    pub connect: Duration,
+    pub first_byte: Duration,
+    pub idle: Duration,
+    pub max_body_bytes: u64,
+}
+impl ProxyLimits {
+    pub fn from_config(t: &Timeouts, max_body_bytes: Option<u64>) -> Self {
+        Self {
+            connect: Duration::from_millis(t.connect_ms),
+            first_byte: Duration::from_millis(t.first_byte_ms),
+            idle: Duration::from_millis(t.idle_ms),
+            max_body_bytes: max_body_bytes.unwrap_or(DEFAULT_MAX_BODY_BYTES),
+        }
+    }
+}
+impl Default for ProxyLimits {
+    fn default() -> Self {
+        Self::from_config(&Timeouts::default(), None)
+    }
+}
+
+/// The upstream client: connect and idle-between-reads timeouts come from config (REQ-PRX-010/AC1).
+pub fn upstream_client(l: &ProxyLimits) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(l.connect)
+        .read_timeout(l.idle)
+        .build()
+        .unwrap_or_default()
+}
+
+/// RFC 9110 §7.6.1 (REQ-PRX-004/AC2).
+pub const HOP_BY_HOP: [&str; 7] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+/// Never forwarded upstream (REQ-SEC-012/AC1).
+pub const CLIENT_CREDENTIALS: [&str; 3] = ["authorization", "cookie", "proxy-authorization"];
+
+pub fn is_hop_by_hop(name: &str, connection_header: Option<&str>) -> bool {
+    let n = name.to_ascii_lowercase();
+    HOP_BY_HOP.contains(&n.as_str())
+        || connection_header
+            .is_some_and(|c| c.split(',').any(|t| t.trim().eq_ignore_ascii_case(&n)))
+}
+
+fn connection_value(h: &HeaderMap) -> Option<&str> {
+    h.get(header::CONNECTION).and_then(|v| v.to_str().ok())
+}
+
+/// Request headers that go upstream: end-to-end only, minus credentials and the ones we own.
+pub fn forwardable_request_headers(h: &HeaderMap) -> Vec<(HeaderName, HeaderValue)> {
+    let conn = connection_value(h);
+    h.iter()
+        .filter(|(n, _)| {
+            let s = n.as_str();
+            !is_hop_by_hop(s, conn)
+                && !CLIENT_CREDENTIALS.contains(&s)
+                && s != "host"
+                && s != "content-length"
+                && s != "x-request-id"
+        })
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect()
+}
+
+/// Response headers that go downstream: end-to-end only (status is copied separately).
+pub fn forwardable_response_headers(h: &HeaderMap) -> Vec<(HeaderName, HeaderValue)> {
+    let conn = connection_value(h);
+    h.iter()
+        .filter(|(n, _)| !is_hop_by_hop(n.as_str(), conn))
+        .map(|(n, v)| (n.clone(), v.clone()))
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct ModelProbe {
+    model: Option<serde_json::Value>,
+}
+
+pub struct Validated {
+    pub model: String,
+}
+
+/// A JSON object with a string `model` (REQ-PRX-018/AC1). The bytes are only inspected, never
+/// re-serialized (AC2): the caller forwards the original buffer.
+pub fn validate_chat_body(body: &[u8]) -> Result<Validated, ApiError> {
+    let probe: ModelProbe = serde_json::from_slice(body).map_err(|e| {
+        ApiError::new(
+            ErrorCode::RequestInvalid,
+            format!("body must be a JSON object: {e}"),
+        )
+    })?;
+    match probe.model {
+        Some(serde_json::Value::String(m)) if !m.is_empty() => Ok(Validated { model: m }),
+        Some(_) => Err(ApiError::new(
+            ErrorCode::RequestInvalid,
+            "'model' must be a non-empty string",
+        )),
+        None => Err(ApiError::new(
+            ErrorCode::RequestInvalid,
+            "missing 'model' in request body",
+        )),
+    }
+}
+
+/// Read at most `max` bytes (REQ-PRX-017/AC1). A declared `Content-Length` above the limit is
+/// refused before reading anything.
+pub async fn read_body_limited(
+    body: Body,
+    content_length: Option<u64>,
+    max: u64,
+) -> Result<Bytes, ApiError> {
+    let too_large = || {
+        ApiError::new(
+            ErrorCode::PayloadTooLarge,
+            format!("request body exceeds max_body_bytes ({max})"),
+        )
+    };
+    if content_length.is_some_and(|n| n > max) {
+        return Err(too_large());
+    }
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
+    axum::body::to_bytes(body, limit)
+        .await
+        .map_err(|_| too_large())
+}
+
+pub fn content_length(h: &HeaderMap) -> Option<u64> {
+    h.get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+}
+
+/// Ends the downstream body with an error (hyper aborts the connection) the moment the upstream
+/// body fails: no synthetic `[DONE]`, nothing fabricated (REQ-PRX-011/AC1).
+struct AbortOnError {
+    inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
+    request_id: String,
+    log: Box<dyn Fn(String) + Send + Sync>,
+    failed: bool,
+}
+impl Stream for AbortOnError {
+    type Item = Result<Bytes, std::io::Error>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.failed {
+            return Poll::Ready(None);
+        }
+        match self.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(b))) => Poll::Ready(Some(Ok(b))),
+            Poll::Ready(Some(Err(e))) => {
+                self.failed = true;
+                let kind = if e.is_timeout() {
+                    "idle timeout between chunks"
+                } else {
+                    "upstream failed mid-stream"
+                };
+                (self.log)(format!(
+                    "UPSTREAM_STREAM_ABORTED request_id={} {kind}",
+                    self.request_id
+                ));
+                Poll::Ready(Some(Err(std::io::Error::other("upstream stream aborted"))))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// Forward `body` to `url` and stream the reply back (REQ-PRX-002/003/004/005/008/010).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site; every argument is a distinct input of the forward step"
+)]
+pub async fn forward(
+    client: &reqwest::Client,
+    url: &str,
+    upstream_bearer: Option<&str>,
+    req_headers: &HeaderMap,
+    body: Bytes,
+    request_id: &str,
+    limits: &ProxyLimits,
+    log: impl Fn(String) + Send + Sync + 'static,
+) -> Response {
+    let mut rb = client
+        .post(url)
+        .body(body)
+        .header("x-request-id", request_id);
+    for (n, v) in forwardable_request_headers(req_headers) {
+        rb = rb.header(n, v);
+    }
+    if let Some(b) = upstream_bearer {
+        rb = rb.header(header::AUTHORIZATION, format!("Bearer {b}"));
+    }
+    let upstream = match tokio::time::timeout(limits.first_byte, rb.send()).await {
+        Err(_) => {
+            return ApiError::new(
+                ErrorCode::UpstreamTimeout,
+                "no response headers from the runtime within first_byte_ms",
+            )
+            .request_id(request_id)
+            .into_response();
+        }
+        Ok(Err(e)) if e.is_timeout() => {
+            return ApiError::new(
+                ErrorCode::UpstreamTimeout,
+                "the runtime did not answer within the configured timeout",
+            )
+            .request_id(request_id)
+            .into_response();
+        }
+        Ok(Err(e)) => {
+            return ApiError::new(
+                ErrorCode::RuntimeUnhealthy,
+                format!(
+                    "runtime connection failed before response headers: {}",
+                    e.without_url()
+                ),
+            )
+            .request_id(request_id)
+            .into_response();
+        }
+        Ok(Ok(r)) => r,
+    };
+    let status =
+        StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let mut b = Response::builder().status(status);
+    for (n, v) in forwardable_response_headers(upstream.headers()) {
+        b = b.header(n, v);
+    }
+    b = b.header("x-request-id", request_id);
+    let stream = AbortOnError {
+        inner: Box::pin(upstream.bytes_stream()),
+        request_id: request_id.to_string(),
+        log: Box::new(log),
+        failed: false,
+    };
+    b.body(Body::from_stream(stream)).unwrap_or_else(|e| {
+        ApiError::new(
+            ErrorCode::RuntimeUnhealthy,
+            format!("could not relay the runtime response: {e}"),
+        )
+        .request_id(request_id)
+        .into_response()
+    })
+}
+
+// ── Request IDs (REQ-PRX-009) ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct RequestId(pub String);
+
+static ID_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[A-Za-z0-9._-]{1,128}$").unwrap_or_else(|_| unreachable!("static regex"))
+});
+
+/// Keep a well-formed incoming id; otherwise mint a UUIDv7.
+pub fn request_id_for(incoming: Option<&str>) -> String {
+    match incoming {
+        Some(s) if ID_RE.is_match(s) => s.to_string(),
+        _ => uuid::Uuid::now_v7().to_string(),
+    }
+}
+
+/// Outermost layer: assigns the id, exposes it as an extension, echoes it on every response.
+pub async fn request_id_middleware(mut req: Request, next: Next) -> Response {
+    let id = request_id_for(
+        req.headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok()),
+    );
+    if let Ok(v) = HeaderValue::from_str(&id) {
+        req.headers_mut().insert("x-request-id", v.clone());
+        req.extensions_mut().insert(RequestId(id));
+        let mut resp = next.run(req).await;
+        resp.headers_mut().entry("x-request-id").or_insert(v);
+        return resp;
+    }
+    next.run(req).await
+}

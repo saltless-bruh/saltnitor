@@ -33,6 +33,13 @@ impl Handle {
     pub fn loaded(&self) -> Vec<String> {
         self.shared.loaded.lock().expect("loaded lock").clone()
     }
+
+    /// Raw-chunk streams currently open (see `Fault::RawChunks`).
+    pub fn in_flight(&self) -> usize {
+        self.shared
+            .in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Drop for Handle {

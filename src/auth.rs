@@ -1,6 +1,7 @@
 //! One authentication layer for the whole router, driven by the Appendix A policy table
 //! (REQ-SEC-001/002/004/005/011/015, REQ-PRX-016). Handlers contain no auth logic.
 use crate::error::{ApiError, ErrorCode};
+use crate::proxy_stream::RequestId;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{Method, Uri, header};
 use axum::middleware::Next;
@@ -232,11 +233,17 @@ pub async fn middleware(
 ) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    let rid = req.extensions().get::<RequestId>().map(|r| r.0.clone());
+    // Every auth/route envelope carries the request id when the id layer ran (REQ-PRX-009/AC2).
+    let with_id = move |e: ApiError| match &rid {
+        Some(id) => e.request_id(id.clone()),
+        None => e,
+    };
     let Some(policy) = policy_for(&path) else {
-        return ApiError::new(
+        return with_id(ApiError::new(
             ErrorCode::EndpointNotSupported,
             format!("{path} is not supported"),
-        )
+        ))
         .into_response();
     };
     let bearer_valid = req
@@ -272,15 +279,21 @@ pub async fn middleware(
                 "no credentials"
             };
             auth.log_failure(peer, &method, &path, reason);
-            ApiError::new(ErrorCode::AuthRequired, "missing or invalid credentials").into_response()
+            with_id(ApiError::new(
+                ErrorCode::AuthRequired,
+                "missing or invalid credentials",
+            ))
+            .into_response()
         }
-        Err(ErrorCode::AuthForbidden) => ApiError::new(
+        Err(ErrorCode::AuthForbidden) => with_id(ApiError::new(
             ErrorCode::AuthForbidden,
             "this credential lacks the required scope",
-        )
+        ))
         .into_response(),
-        Err(code) => {
-            ApiError::new(code, format!("{method} {path} is not supported")).into_response()
-        }
+        Err(code) => with_id(ApiError::new(
+            code,
+            format!("{method} {path} is not supported"),
+        ))
+        .into_response(),
     }
 }

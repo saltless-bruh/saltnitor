@@ -14,7 +14,7 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use reqwest::Client;
-use saltnitor::{app, auth, config_v1, control_api, events, ui};
+use saltnitor::{app, auth, config_v1, control_api, events, proxy_stream, ui};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -277,7 +277,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 toml_conf.reserve_ram_gb.unwrap_or(1.0),
                 tx.clone(),
             )
-            .allow_query_token(toml_conf.allow_query_token.unwrap_or(false)),
+            .allow_query_token(toml_conf.allow_query_token.unwrap_or(false))
+            .limits(proxy_stream::ProxyLimits::from_config(
+                &toml_conf.timeouts,
+                toml_conf.max_body_bytes,
+            )),
         );
         if toml_conf.allow_query_token.unwrap_or(false) {
             let warning = "saltnitor: security: allow_query_token=true — ?token= is accepted on GET /v1/ensure/stream only; the value is redacted in logs";

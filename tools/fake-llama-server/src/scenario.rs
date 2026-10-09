@@ -63,6 +63,28 @@ pub enum Fault {
     CrashAfter { chunks: usize },
     /// 200 with a truncated JSON body or broken SSE framing.
     Malformed,
+    /// Stream these byte pieces verbatim (no SSE wrapping): the first immediately, then `delay_ms`
+    /// before each later piece. Records `chunk_sent {index, t_unix_ms}` per piece.
+    RawChunks {
+        items: Vec<String>,
+        #[serde(default)]
+        delay_ms: u64,
+        #[serde(default = "default_200")]
+        code: u16,
+        #[serde(default = "default_sse")]
+        content_type: String,
+        /// Extra response headers (the proxy must drop the hop-by-hop ones among them).
+        #[serde(default)]
+        headers: Vec<(String, String)>,
+    },
+}
+
+fn default_200() -> u16 {
+    200
+}
+
+fn default_sse() -> String {
+    "text/event-stream".into()
 }
 
 /// Binary only: exit at startup with llama.cpp-style OOM text when `arg`'s value > `gt`.

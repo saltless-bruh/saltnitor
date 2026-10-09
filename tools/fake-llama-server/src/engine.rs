@@ -1,4 +1,5 @@
 //! The fake llama-server HTTP surface: one fallback handler dispatching on (method, path).
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
+use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::recorder::Recorder;
@@ -28,6 +30,8 @@ pub(crate) struct Shared {
     pub(crate) loaded: Mutex<Vec<String>>,
     pub(crate) recorder: Recorder,
     pub(crate) crash: CrashMode,
+    /// Raw-chunk streams currently open (decremented when the body is dropped or finishes).
+    pub(crate) in_flight: AtomicUsize,
 }
 
 impl Shared {
@@ -43,6 +47,7 @@ impl Shared {
             loaded: Mutex::new(loaded),
             recorder,
             crash,
+            in_flight: AtomicUsize::new(0),
         })
     }
 
@@ -156,6 +161,21 @@ async fn apply_fault(
             };
             stream_body(st.clone(), path, pieces, 0, Some(chunks), ct)
         }
+        Fault::RawChunks {
+            items,
+            delay_ms,
+            code,
+            content_type,
+            headers,
+        } => raw_stream(
+            st.clone(),
+            path,
+            items,
+            delay_ms,
+            code,
+            &content_type,
+            headers,
+        ),
         Fault::Malformed if is_chat && stream => text_resp(
             200,
             "text/event-stream",
@@ -268,6 +288,86 @@ fn stream_body(
         .header(header::CONTENT_TYPE, content_type)
         .body(Body::from_stream(ReceiverStream::new(rx)))
         .expect("valid streaming response")
+}
+
+/// A body stream that reports its own end: normal completion or a drop (client went away).
+struct Tracked {
+    inner: ReceiverStream<Result<Bytes, std::io::Error>>,
+    st: Arc<Shared>,
+    path: String,
+    finished: bool,
+}
+
+impl Stream for Tracked {
+    type Item = Result<Bytes, std::io::Error>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let r = std::pin::Pin::new(&mut self.inner).poll_next(cx);
+        if let std::task::Poll::Ready(None) = r {
+            self.finished = true;
+        }
+        r
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        self.st.in_flight.fetch_sub(1, Ordering::SeqCst);
+        if !self.finished {
+            self.st.recorder.disconnect(&self.path);
+        }
+    }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn raw_stream(
+    st: Arc<Shared>,
+    path: &str,
+    items: Vec<String>,
+    delay_ms: u64,
+    code: u16,
+    content_type: &str,
+    headers: Vec<(String, String)>,
+) -> Response {
+    st.in_flight.fetch_add(1, Ordering::SeqCst);
+    let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let path_s = path.to_string();
+    let st2 = st.clone();
+    tokio::spawn(async move {
+        for (i, piece) in items.into_iter().enumerate() {
+            if i > 0 && delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+            if tx.send(Ok(Bytes::from(piece))).await.is_err() {
+                return; // Tracked's Drop records the disconnect
+            }
+            st2.recorder.record(
+                "chunk_sent",
+                json!({ "path": path_s, "index": i, "t_unix_ms": unix_ms() }),
+            );
+        }
+    });
+    let mut b = Response::builder()
+        .status(StatusCode::from_u16(code).unwrap_or(StatusCode::OK))
+        .header(header::CONTENT_TYPE, content_type);
+    for (k, v) in headers {
+        b = b.header(k, v);
+    }
+    b.body(Body::from_stream(Tracked {
+        inner: ReceiverStream::new(rx),
+        st,
+        path: path.to_string(),
+        finished: false,
+    }))
+    .expect("valid streaming response")
 }
 
 async fn crash(st: &Shared, tx: &mpsc::Sender<Result<Bytes, std::io::Error>>) {

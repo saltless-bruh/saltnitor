@@ -413,3 +413,37 @@ async fn client_disconnect_is_recorded() {
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(d[0]["path"], "/v1/chat/completions");
 }
+
+/// Verifies: REQ-TST-011/AC1 (raw chunk fault; send timestamps; in-flight count; drop-detected disconnect)
+#[tokio::test]
+async fn raw_chunks_stream_verbatim_with_timestamps_and_track_in_flight() {
+    let mut s = Scenario::default();
+    s.routes.insert(
+        "POST /v1/chat/completions".into(),
+        Fault::RawChunks {
+            items: vec![": hi\n\n".into(), "data: [DONE]\n\n".into()],
+            delay_ms: 50,
+            code: 200,
+            content_type: "text/event-stream".into(),
+            headers: vec![("x-fake-upstream".into(), "1".into())],
+        },
+    );
+    let h = spawn(s).await;
+    assert_eq!(h.in_flight(), 0);
+    let r = reqwest::Client::new()
+        .post(format!("{}/v1/chat/completions", h.base_url()))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.headers()["x-fake-upstream"], "1");
+    assert_eq!(r.text().await.unwrap(), ": hi\n\ndata: [DONE]\n\n");
+    let sent = h.recorder.of_kind("chunk_sent");
+    assert_eq!(sent.len(), 2);
+    assert!(sent[1]["t_unix_ms"].as_u64().unwrap() >= sent[0]["t_unix_ms"].as_u64().unwrap() + 50);
+    assert_eq!(
+        h.in_flight(),
+        0,
+        "completed streams leave the counter where it was"
+    );
+}

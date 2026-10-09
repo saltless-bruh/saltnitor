@@ -8,7 +8,7 @@ rust-version = "1.95"   # sysinfo 0.39 requires 1.95; CI's msrv job builds with 
 crossterm = "0.29.0"
 ratatui = "0.30.0"
 regex = "1.12.3"
-reqwest = { version = "0.13.3", features = ["json"] }
+reqwest = { version = "0.13.3", features = ["json", "stream"] }   # stream: bytes_stream() for the proxy (REQ-PRX-002)
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sysinfo = "0.39.0"
@@ -20,8 +20,9 @@ serde_path_to_error = "0.1"   # dotted key path in config diagnostics (REQ-CFG-0
 
 # --- added for the headless control API (control_api.rs) ---
 axum = "0.8"            # default features include json + tokio + query (all needed)
-tokio-stream = "0.1"    # ReceiverStream + StreamExt for the /v1/ensure/stream SSE body
+tokio-stream = { version = "0.1", features = ["time"] }    # ReceiverStream + StreamExt for the /v1/ensure/stream SSE body
 subtle = "2"            # constant-time token comparison (REQ-SEC-004); BSD-3-Clause
+uuid = { version = "1", features = ["v7"] }   # request IDs, REQ-PRX-009; MIT/Apache-2.0
 rustix = { version = "1", features = ["process"] }   # geteuid for key-file ownership (REQ-SEC-003), pidfd in T1.13; Apache-2.0/MIT, already transitive via crossterm
 
 [workspace]

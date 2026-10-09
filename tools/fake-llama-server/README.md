@@ -30,9 +30,24 @@ Authorization header value is never recorded.
     id = "A"
     loaded = true
     [routes."POST /v1/chat/completions"]
-    kind = "chunks"            # status | chunks | hang_before_headers | crash_after | malformed
+    kind = "chunks"            # status | chunks | raw_chunks | hang_before_headers | crash_after | malformed
     items = ["a", "b"]
     delay_ms = 200
+
+`raw_chunks` streams the `items` byte pieces verbatim (no SSE wrapping): the first at once, then
+`delay_ms` before each later one. Optional `code` (default 200), `content_type` (default
+`text/event-stream`) and `headers` (list of `[name, value]` pairs, e.g. hop-by-hop ones the proxy
+must drop):
+
+    [routes."POST /v1/chat/completions"]
+    kind = "raw_chunks"
+    items = ["data: A\n\n", "data: B\n\n"]
+    delay_ms = 2000
+    headers = [["x-fake-upstream", "1"]]
+
+Each piece records `chunk_sent {path, index, t_unix_ms}` (wall-clock, for measuring proxy latency).
+A client that goes away mid-stream records `disconnect`. In-process, `Handle::in_flight()` counts
+raw-chunk streams still open.
 
 ## Record / replay (real-world check, CR-2)
 

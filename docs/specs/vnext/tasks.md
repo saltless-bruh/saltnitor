@@ -271,7 +271,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** `control_token_env` / `control_token_file` (reject files readable by group or others); the literal `control_token` keeps working with a deprecation warning; a redaction layer for logs and crash dumps.
   - **Done when:** tests cover file-permission rejection, the deprecation warning, and absence of token values in the captured log output and crash dump.
 
-- [ ] **T1.11 — Streaming proxy core** · *test-first*
+- [x] **T1.11 — Streaming proxy core** · *test-first*
   - **Reqs:** REQ-PRX-001, REQ-PRX-002, REQ-PRX-003, REQ-PRX-004, REQ-PRX-005, REQ-PRX-009, REQ-SEC-012, REQ-MIG-007/AC1, REQ-TST-008
   - **Depends:** T0.4, T1.8
   - **Read first:** BP §4.2, §14

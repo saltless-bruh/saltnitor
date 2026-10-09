@@ -24,11 +24,11 @@ use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
-    body::{Body, Bytes},
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    body::Body,
+    extract::{Extension, Query, State},
+    http::{HeaderMap, StatusCode},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
+    response::{IntoResponse, Response},
     routing::{MethodRouter, get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,9 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
 use crate::error::{ApiError, ErrorCode};
 use crate::events::Event;
+use crate::proxy_stream::{
+    self, ProxyLimits, RequestId, content_length, read_body_limited, validate_chat_body,
+};
 
 // ───────────────────────── profile metadata (oracle only) ─────────────────────────
 // The router flags live in presets.ini. Here we only need what the ORACLE needs:
@@ -62,6 +65,7 @@ pub struct ControlApi {
     reserve_ram_gb: f64,
     tx: mpsc::Sender<Event>,
     http: reqwest::Client,
+    limits: ProxyLimits,
     ensure_lock: Mutex<()>, // serialize ensures (don't fire two loads at once)
 }
 
@@ -85,9 +89,17 @@ impl ControlApi {
             reserve_vram_gb,
             reserve_ram_gb,
             tx,
-            http: reqwest::Client::new(),
+            http: proxy_stream::upstream_client(&ProxyLimits::default()),
+            limits: ProxyLimits::default(),
             ensure_lock: Mutex::new(()),
         }
+    }
+
+    /// Proxy timeouts and body limit (REQ-PRX-010, REQ-PRX-017); rebuilds the upstream client.
+    pub fn limits(mut self, l: ProxyLimits) -> Self {
+        self.http = proxy_stream::upstream_client(&l);
+        self.limits = l;
+        self
     }
 
     /// Opt in to `?token=` on `GET /v1/ensure/stream` only (default off).
@@ -504,14 +516,22 @@ async fn h_health() -> Json<serde_json::Value> {
 /// to switch models" — one swap-orchestrating endpoint that works for any agent that
 /// speaks the OpenAI chat API. (Agents that don't want the oracle can still point at
 /// the router :8080 directly; the router's --models-max 1 auto-swaps on the model id.)
-async fn h_chat(State(api): State<Arc<ControlApi>>, body: Bytes) -> axum::response::Response {
-    // pull the model id (= a router section / profile name) out of the request body
-    let model = serde_json::from_slice::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|v| v.get("model").and_then(|m| m.as_str()).map(str::to_string));
-    let Some(model) = model else {
-        return ApiError::new(ErrorCode::RequestInvalid, "missing 'model' in request body")
-            .into_response();
+async fn h_chat(
+    State(api): State<Arc<ControlApi>>,
+    Extension(rid): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let rid = rid.0;
+    let body =
+        match read_body_limited(body, content_length(&headers), api.limits.max_body_bytes).await {
+            Ok(b) => b,
+            Err(e) => return e.request_id(&rid).into_response(),
+        };
+    // Only the model id is read from the body; the original bytes are what gets forwarded.
+    let model = match validate_chat_body(&body) {
+        Ok(v) => v.model,
+        Err(e) => return e.request_id(&rid).into_response(),
     };
 
     // make it resident before forwarding. Idempotent: AlreadyResident is the fast path.
@@ -530,6 +550,7 @@ async fn h_chat(State(api): State<Arc<ControlApi>>, body: Bytes) -> axum::respon
                 ErrorCode::ModelNotFound,
                 format!("unknown model '{model}': {e}"),
             )
+            .request_id(&rid)
             .into_response();
         }
         EnsureOutcome::Oom(i) => {
@@ -540,57 +561,32 @@ async fn h_chat(State(api): State<Arc<ControlApi>>, body: Bytes) -> axum::respon
                 ),
                 &i,
             )
+            .request_id(&rid)
             .into_response();
         }
         EnsureOutcome::Err(e) => {
             return ApiError::new(ErrorCode::RuntimeStartFailed, format!("load failed: {e}"))
+                .request_id(&rid)
                 .into_response();
         }
-        _ => {} // Loaded | AlreadyResident -> proceed
+        EnsureOutcome::Loaded { .. } | EnsureOutcome::AlreadyResident { .. } => {}
     }
 
-    // forward verbatim to the router; stream the (possibly SSE) response straight back
     let url = format!("{}/v1/chat/completions", api.router_base);
-    let mut rb = api
-        .http
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .body(body);
-    if let Some(tok) = &api.infer_bearer {
-        rb = rb.header("Authorization", format!("Bearer {}", tok));
-    }
-    match rb.send().await {
-        Ok(resp) => {
-            let status =
-                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-            let ctype = resp
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/json")
-                .to_string();
-            match resp.bytes().await {
-                Ok(bytes) => axum::response::Response::builder()
-                    .status(status)
-                    .header("Content-Type", ctype)
-                    .body(Body::from(bytes))
-                    .unwrap_or_else(|_| {
-                        ApiError::new(ErrorCode::RuntimeUnhealthy, "proxy build error")
-                            .into_response()
-                    }),
-                Err(e) => ApiError::new(
-                    ErrorCode::RuntimeUnhealthy,
-                    format!("router read failed: {e}"),
-                )
-                .into_response(),
-            }
-        }
-        Err(e) => ApiError::new(
-            ErrorCode::RuntimeUnhealthy,
-            format!("router unreachable: {e}"),
-        )
-        .into_response(),
-    }
+    let tx = api.tx.clone();
+    proxy_stream::forward(
+        &api.http,
+        &url,
+        api.infer_bearer.as_deref(),
+        &headers,
+        body,
+        &rid,
+        &api.limits,
+        move |l| {
+            let _ = tx.try_send(Event::LogLine(l));
+        },
+    )
+    .await
 }
 
 /// Any path no route claims: `/v1/*` endpoints we do not implement, and everything else (REQ-PRX-020).
@@ -635,6 +631,10 @@ pub fn router(api: Arc<ControlApi>, auth: Arc<crate::auth::AuthState>) -> Result
         .layer(axum::middleware::from_fn_with_state(
             auth,
             crate::auth::middleware,
+        ))
+        // Outermost (added last): the id exists before auth runs, so every envelope carries it.
+        .layer(axum::middleware::from_fn(
+            proxy_stream::request_id_middleware,
         ))
         .with_state(api))
 }
@@ -1423,10 +1423,10 @@ mod tests {
         );
     }
 
-    /// BD-02 evidence probe — measures, asserts nothing about buffering (REQ-MIG-002/AC3).
+    /// BD-02 fixed by T1.11: the first byte through Saltnitor arrives long before the stream ends
+    /// (the baseline buffered the whole body). Verifies: REQ-MIG-007/AC1, REQ-PRX-002/AC1
     #[tokio::test]
-    #[ignore = "BD-02 evidence probe: cargo test bd02_first_byte_timing -- --ignored --nocapture"]
-    async fn bd02_first_byte_timing() {
+    async fn first_byte_arrives_before_completion_bd02_fixed() {
         async fn first_byte(http: &reqwest::Client, url: String) -> (u16, u128, u128) {
             let t0 = std::time::Instant::now();
             let mut resp = http
@@ -1459,6 +1459,14 @@ mod tests {
             via.0, via.1, via.2
         );
         assert_eq!((direct.0, via.0), (200, 200));
+        // Five 200 ms-spaced pieces plus [DONE]: a buffering proxy would deliver its first byte at
+        // the very end (first == total). Streaming delivers it in the first sixth of the stream.
+        assert!(
+            via.1 * 3 < via.2,
+            "first byte at {} ms of {} ms total: the proxy is buffering",
+            via.1,
+            via.2
+        );
     }
 
     /// BD-32 evidence probe — shows what status reports for the current upstream shape.
@@ -1508,18 +1516,33 @@ mod tests {
         );
     }
 
-    /// Verifies: REQ-ERR-001/AC1, REQ-MIG-002/AC1, REQ-TST-002/AC1
+    /// The upstream drops the connection after its headers were sent. Streaming means the status is
+    /// already committed, so there is no 502 envelope any more (the baseline buffered the body and
+    /// could still send one): the downstream body ends in an error with nothing fabricated.
+    /// A reset *before* headers still yields 502 `RUNTIME_UNHEALTHY` (REQ-PRX-008/AC2, T1.12).
+    /// Verifies: REQ-PRX-011/AC1, REQ-MIG-002/AC1
     #[tokio::test]
-    async fn chat_upstream_failure_is_502_envelope() {
+    async fn chat_upstream_crash_after_headers_aborts_the_body_without_fabrication() {
         let sc = scenario("control-api-legacy.toml")
             .with_fault("POST /v1/chat/completions", Fault::CrashAfter { chunks: 0 });
         let r = rig(sc, &[("A", fits())], None).await;
-        let (s, ct, text) = r
-            .post_raw("/v1/chat/completions", r#"{"model":"A","messages":[]}"#)
-            .await;
-        let v: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!((s, ct.as_str()), (502, "application/json"));
-        assert_eq!(v["error"]["code"], "RUNTIME_UNHEALTHY");
+        let resp = r
+            .http
+            .post(r.url("/v1/chat/completions"))
+            .header("Content-Type", "application/json")
+            .body(r#"{"model":"A","messages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            200,
+            "headers were already committed upstream"
+        );
+        assert!(
+            resp.bytes().await.is_err(),
+            "the body must end in an error, not in a clean (fabricated) end"
+        );
     }
 
     /// Verifies: REQ-PRX-020/AC1
