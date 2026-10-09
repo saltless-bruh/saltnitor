@@ -371,7 +371,7 @@ fn sse_piece() -> impl Strategy<Value = String> {
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 24, .. ProptestConfig::default() })]
-    /// Verifies: REQ-PRX-003/AC1 [PROP], REQ-TST-008/AC1
+    /// Verifies: REQ-TST-008/AC1, REQ-PRX-003/AC1 [PROP]
     #[test]
     fn downstream_bytes_equal_upstream_bytes_for_any_chunking(pieces in prop::collection::vec(sse_piece(), 1..12), code in prop_oneof![Just(200u16), Just(404u16), Just(500u16)], stream in any::<bool>()) {
         let expected: String = pieces.concat();
