@@ -280,7 +280,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Not in scope:** timeouts and cancellation (T1.12); leases (P6).
   - **Done when:** `cargo test --test proxy_streaming` proves REQ-PRX-002/AC2, the REQ-PRX-003 property (random chunkings), header rules, credential stripping, and request IDs; `grep -nE '\.(bytes|text|json)\(\)' src/proxy_stream.rs` finds no call on an upstream response.
 
-- [ ] **T1.12 — Cancellation, timeouts, failures, limits** · *test-first*
+- [x] **T1.12 — Cancellation, timeouts, failures, limits** · *test-first*
   - **Reqs:** REQ-PRX-006, REQ-PRX-008, REQ-PRX-010, REQ-PRX-011, REQ-PRX-017, REQ-PRX-018, REQ-TST-002
   - **Depends:** T1.11
   - **Files:** `src/proxy_stream.rs`, `tests/proxy_failures.rs`
