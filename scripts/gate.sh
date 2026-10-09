@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run a gate's automated rows and print a PASS/FAIL table (REQ-TST-012; CODEOWNERS-protected).
 #   scripts/gate.sh G0       run gate G0
+#   scripts/gate.sh G1       run gate G1
 #   scripts/gate.sh counts   per-suite test counts (source of evidence/test-baseline.txt)
 # Manual rows are printed as MANUAL and are never passed by this script.
 # No `-e`: a failing row must not stop the gate — every row runs and is reported.
@@ -125,10 +126,65 @@ gate_g0() {
   PROTECTED_SINCE=c89f278
 }
 
+# shellcheck disable=SC2329  # invoked indirectly: passed by name to run_row
+row_invariants_clean() {
+  [[ -x scripts/check-invariants.sh ]] || { echo "scripts/check-invariants.sh missing (T1.5)"; return 1; }
+  scripts/check-invariants.sh || return 1
+  if [[ -s scripts/invariants-baseline.txt ]]; then
+    echo "scripts/invariants-baseline.txt is not empty:"; cat scripts/invariants-baseline.txt; return 1
+  fi
+  echo "invariant scan passes and the baseline is empty"
+}
+
+# shellcheck disable=SC2329  # invoked indirectly: passed by name to run_row
+row_repo_hygiene() {
+  local bad=0
+  [[ -n $(git ls-files Cargo.lock) ]] || { echo "Cargo.lock is not tracked (T1.1)"; bad=1; }
+  if grep -n "Cargo.lock" .gitignore; then echo ".gitignore still lists Cargo.lock (T1.1)"; bad=1; fi
+  local leftovers
+  leftovers=$(git ls-files .saltnitor_history crash_dump_20260511_163653.txt legacy.zip .vscode)
+  [[ -z $leftovers ]] || { echo "artifacts still tracked (T1.2):"; echo "$leftovers"; bad=1; }
+  [[ $bad -eq 0 ]] && echo "lockfile tracked, no stray artifacts"
+  return "$bad"
+}
+
+# shellcheck disable=SC2329  # invoked indirectly: passed by name to run_row
+row_tests_not_weakened() { # since $1: every commit touching tests/ or snapshots carries Protected-change:
+  local since=$1 bad=0 c
+  while read -r c; do
+    [[ -n $c ]] || continue
+    if git show -s --format=%B "$c" | grep -q '^Protected-change:'; then
+      echo "ok   $(git show -s --format='%h %s' "$c")"
+    else
+      echo "MISSING trailer: $(git show -s --format='%h %s' "$c")"; bad=1
+    fi
+  done < <(git log --format=%H "$since..HEAD" -- tests ':(glob)**/snapshots/**')
+  git diff --stat "$since" HEAD -- tests ':(glob)**/snapshots/**'
+  return "$bad"
+}
+
+gate_g1() {
+  local g0=c155628   # G0 PASSED (PROGRESS.md 2026-09-29)
+  add_row 1 "CI green" MANUAL "CI run on vnext HEAD: all jobs pass"
+  run_row 2 "Acceptance suite (G1 tests from T1.0, unmodified)" cargo test --test acceptance --locked
+  run_row 3 "Compositional scenario" cargo test --test acceptance --locked g1_compositional
+  run_row 4 "Invariant scan + empty baseline" row_invariants_clean
+  run_row 5 "Repository hygiene (T1.1/T1.2)" row_repo_hygiene
+  run_row 6a "Tests not weakened: Protected-change trailer on every tests/ or snapshot commit" row_tests_not_weakened "$g0"
+  add_row 6 "Tests not weakened" MANUAL "operator approves the row-6a list in evidence/G1.md (CR-8)"
+  run_row 7 "Traceability" python3 "$TOOLS/spec_lint.py" --tests --phase P1
+  add_row D1 "Real streaming" MANUAL "binary + fake runtime slow-stream; curl -N through :8765 with ts timestamps: chunks arrive incrementally"
+  add_row D2 "Bad config" MANUAL "saltnitor --config bad.toml; echo \$? -> 2 and the full diagnostic"
+  add_row D3 "Process terminate in TUI" MANUAL "terminate a dummy process by PID; X asks for confirmation"
+  add_row V "Independent verification and falsification" MANUAL "verifier ≠ implementer; rubric clean; every listed claim NOT_FALSIFIED"
+  PROTECTED_SINCE=$g0
+}
+
 case "${1:-}" in
   counts) suite_counts; exit $? ;;
   G0) gate_g0 ;;
-  *) echo "usage: scripts/gate.sh G0 | counts   (no rows defined for '${1:-}')" >&2; exit 2 ;;
+  G1) gate_g1 ;;
+  *) echo "usage: scripts/gate.sh G0 | G1 | counts   (no rows defined for '${1:-}')" >&2; exit 2 ;;
 esac
 
 echo "## Gate $1 — automated rows at $(git rev-parse --short HEAD)"

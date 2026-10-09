@@ -197,7 +197,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
 **Entry:** G0 PASSED. **Read first:** BP §4, §24, §25, §29 "Hardening gate".
 **Out of scope:** module extraction (P2), daemon split (P3), config v2 (P4), leases (P6).
 
-- [ ] **T1.0 — G1 acceptance tests (red)** · *independent author* `[HUMAN]` approval
+- [x] **T1.0 — G1 acceptance tests (red)** · *independent author* `[HUMAN]` approval
   - **Reqs:** REQ-TST-012, REQ-TST-014, REQ-TST-016
   - **Files:** `tests/acceptance/g1_*.rs` (target `acceptance`), `scripts/gate.sh` (G1 rows)
   - **Do:** a session that will **not** implement P1 writes the acceptance tests for the G1 rows below, black-box against the built binary plus the fake runtime: first SSE chunk before completion; byte-exact bodies; cancellation; 401 on every protected route; query token refused by default; malformed config → exit 2 with the diagnostic, port free; terminating by PID through the process-control module API leaves a same-named process alive (the TUI path is demonstrated in D3). Also one compositional scenario: auth + streaming + request ID + cancellation in one flow. CI runs the `acceptance` target as informational until G1.
