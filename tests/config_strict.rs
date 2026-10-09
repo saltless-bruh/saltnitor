@@ -79,3 +79,18 @@ fn missing_config_flag_file_exits_2() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("absent.toml"));
 }
+
+/// Verifies: REQ-SEC-006/AC1, REQ-CFG-003/AC2 — a type error on a secret key names the type, never the value
+#[test]
+fn type_errors_on_secret_keys_never_echo_the_value() {
+    for key in ["control_token", "infer_bearer", "control_token_env"] {
+        let (code, err, _port, _d) = run(&format!("control_port = {{PORT}}\n{key} = 7741851\n"));
+        assert_eq!(code, 2, "{key}: {err}");
+        assert!(err.contains(key), "{key}: {err}");
+        assert!(
+            err.contains("found integer"),
+            "{key}: the type is still reported: {err}"
+        );
+        assert!(!err.contains("7741851"), "{key}: the value leaked: {err}");
+    }
+}

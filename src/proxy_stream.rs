@@ -43,11 +43,16 @@ impl Default for ProxyLimits {
 /// The upstream client: only the connect timeout is client-wide. A client-level read timeout would
 /// also bound the wait for response headers, making `first_byte_ms` unreachable; the idle gap
 /// between body chunks is enforced per chunk by `AbortOnError` instead (REQ-PRX-010/AC1).
-pub fn upstream_client(l: &ProxyLimits) -> reqwest::Client {
+///
+/// The runtime is a loopback service (INV-06): `no_proxy()` keeps a stray `HTTP_PROXY` in the
+/// daemon's environment from diverting inference traffic. A build failure is an error, never a
+/// silently different client without the connect timeout.
+pub fn upstream_client(l: &ProxyLimits) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
+        .no_proxy()
         .connect_timeout(l.connect)
         .build()
-        .unwrap_or_default()
+        .map_err(|e| format!("cannot build the upstream HTTP client: {e}"))
 }
 
 /// RFC 9110 §7.6.1 (REQ-PRX-004/AC2).
@@ -90,18 +95,47 @@ pub fn forwardable_request_headers(h: &HeaderMap) -> Vec<(HeaderName, HeaderValu
         .collect()
 }
 
-/// Response headers that go downstream: end-to-end only (status is copied separately).
+/// Response headers that go downstream: end-to-end only (status is copied separately). The
+/// proxy owns `X-Request-Id` (REQ-PRX-009), so an upstream one is dropped, never duplicated.
 pub fn forwardable_response_headers(h: &HeaderMap) -> Vec<(HeaderName, HeaderValue)> {
     let conn = connection_value(h);
     h.iter()
-        .filter(|(n, _)| !is_hop_by_hop(n.as_str(), conn))
+        .filter(|(n, _)| !is_hop_by_hop(n.as_str(), conn) && n.as_str() != "x-request-id")
         .map(|(n, v)| (n.clone(), v.clone()))
         .collect()
 }
 
-#[derive(Deserialize)]
+/// Only the top-level `model` of a JSON *object*. Deserialized through `deserialize_map` so a
+/// sequence (`["A"]`) or scalar is an error, which a derived `Deserialize` would not give.
 struct ModelProbe {
     model: Option<serde_json::Value>,
+}
+impl<'de> Deserialize<'de> for ModelProbe {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = ModelProbe;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut model = None;
+                while let Some(key) = m.next_key::<String>()? {
+                    if key == "model" {
+                        model = Some(m.next_value::<serde_json::Value>()?);
+                    } else {
+                        m.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                // `"model": null` is present-but-not-a-string, same as any other non-string.
+                Ok(ModelProbe { model })
+            }
+        }
+        d.deserialize_map(V)
+    }
 }
 
 pub struct Validated {

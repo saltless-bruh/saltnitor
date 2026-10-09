@@ -24,9 +24,14 @@ fn token_from_env_and_from_a_private_file() {
         ..Default::default()
     };
     assert_eq!(
-        resolve_control_token(&cfg, &env(&[("SALT_T110", "env-secret")]), &mut notes)
-            .unwrap()
-            .as_deref(),
+        resolve_control_token(
+            &cfg,
+            std::path::Path::new("/cfg/d.toml"),
+            &env(&[("SALT_T110", "env-secret")]),
+            &mut notes
+        )
+        .unwrap()
+        .as_deref(),
         Some("env-secret")
     );
     let cfg = ConfigV1 {
@@ -34,9 +39,14 @@ fn token_from_env_and_from_a_private_file() {
         ..Default::default()
     };
     assert_eq!(
-        resolve_control_token(&cfg, &env(&[]), &mut notes)
-            .unwrap()
-            .as_deref(),
+        resolve_control_token(
+            &cfg,
+            std::path::Path::new("/cfg/d.toml"),
+            &env(&[]),
+            &mut notes
+        )
+        .unwrap()
+        .as_deref(),
         Some("file-secret")
     );
     assert!(
@@ -56,7 +66,13 @@ fn unsafe_key_files_are_config_invalid() {
         control_token_file: Some(f.to_string_lossy().into_owned()),
         ..Default::default()
     };
-    let e = resolve_control_token(&cfg, &env(&[]), &mut vec![]).unwrap_err();
+    let e = resolve_control_token(
+        &cfg,
+        std::path::Path::new("/cfg/d.toml"),
+        &env(&[]),
+        &mut vec![],
+    )
+    .unwrap_err();
     assert_eq!(e.key, "control_token_file");
     assert!(e.found.contains("0640"), "{e}");
     let cfg = ConfigV1 {
@@ -64,10 +80,15 @@ fn unsafe_key_files_are_config_invalid() {
         ..Default::default()
     };
     assert!(
-        resolve_control_token(&cfg, &env(&[]), &mut vec![])
-            .unwrap_err()
-            .found
-            .contains("not a regular file")
+        resolve_control_token(
+            &cfg,
+            std::path::Path::new("/cfg/d.toml"),
+            &env(&[]),
+            &mut vec![]
+        )
+        .unwrap_err()
+        .found
+        .contains("not a regular file")
     );
     assert!(
         validate_key_file(true, 0o600, 1234, 1000)
@@ -86,9 +107,14 @@ fn literal_token_still_works_with_a_deprecation_warning() {
     };
     let mut notes = vec![];
     assert_eq!(
-        resolve_control_token(&cfg, &env(&[]), &mut notes)
-            .unwrap()
-            .as_deref(),
+        resolve_control_token(
+            &cfg,
+            std::path::Path::new("/cfg/d.toml"),
+            &env(&[]),
+            &mut notes
+        )
+        .unwrap()
+        .as_deref(),
         Some("lit")
     );
     assert!(notes.iter().any(|n| n.contains("deprecated")), "{notes:?}");
@@ -98,9 +124,14 @@ fn literal_token_still_works_with_a_deprecation_warning() {
         ..Default::default()
     };
     assert_eq!(
-        resolve_control_token(&two, &env(&[("B", "b")]), &mut vec![])
-            .unwrap_err()
-            .key,
+        resolve_control_token(
+            &two,
+            std::path::Path::new("/cfg/d.toml"),
+            &env(&[("B", "b")]),
+            &mut vec![]
+        )
+        .unwrap_err()
+        .key,
         "control_token"
     );
 }
@@ -141,4 +172,22 @@ fn logs_and_crash_dumps_never_contain_tokens() {
         !dump.contains("s3cr3t-value") && dump.contains("<redacted>"),
         "{dump}"
     );
+}
+
+/// Verifies: REQ-CFG-003/AC2, REQ-SEC-003/AC2 — a token-source error names the config file that was loaded
+#[test]
+fn token_source_errors_name_the_loaded_config_file() {
+    let cfg = ConfigV1 {
+        control_token_file: Some("/nonexistent/key".into()),
+        ..Default::default()
+    };
+    let e = resolve_control_token(
+        &cfg,
+        std::path::Path::new("/etc/elsewhere/d.toml"),
+        &env(&[]),
+        &mut vec![],
+    )
+    .unwrap_err();
+    assert_eq!(e.file, std::path::PathBuf::from("/etc/elsewhere/d.toml"));
+    assert!(e.to_string().starts_with("/etc/elsewhere/d.toml"), "{e}");
 }

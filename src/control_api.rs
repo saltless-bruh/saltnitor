@@ -25,7 +25,10 @@ use std::time::{Duration, Instant};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Extension, Query, State},
+    extract::{
+        Extension, FromRequest, FromRequestParts, Query, Request, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode},
     response::sse::{Event as SseEvent, KeepAlive, Sse},
     response::{IntoResponse, Response},
@@ -70,7 +73,10 @@ pub struct ControlApi {
 }
 
 impl ControlApi {
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "ControlApi::new is replaced by the daemon config struct in T2.x"
+    )]
     pub fn new(
         profiles: HashMap<String, ProfileMeta>,
         router_base: String,
@@ -79,8 +85,8 @@ impl ControlApi {
         reserve_vram_gb: f64,
         reserve_ram_gb: f64,
         tx: mpsc::Sender<Event>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        Ok(Self {
             profiles,
             router_base,
             infer_bearer,
@@ -89,17 +95,17 @@ impl ControlApi {
             reserve_vram_gb,
             reserve_ram_gb,
             tx,
-            http: proxy_stream::upstream_client(&ProxyLimits::default()),
+            http: proxy_stream::upstream_client(&ProxyLimits::default())?,
             limits: ProxyLimits::default(),
             ensure_lock: Mutex::new(()),
-        }
+        })
     }
 
     /// Proxy timeouts and body limit (REQ-PRX-010, REQ-PRX-017); rebuilds the upstream client.
-    pub fn limits(mut self, l: ProxyLimits) -> Self {
-        self.http = proxy_stream::upstream_client(&l);
+    pub fn limits(mut self, l: ProxyLimits) -> Result<Self, String> {
+        self.http = proxy_stream::upstream_client(&l)?;
         self.limits = l;
-        self
+        Ok(self)
     }
 
     /// Opt in to `?token=` on `GET /v1/ensure/stream` only (default off).
@@ -419,10 +425,61 @@ fn oracle_rejected(msg: String, i: &OomInfo) -> ApiError {
     }))
 }
 
+/// `Json<T>` whose rejections are error envelopes carrying the request id, instead of axum's
+/// plain-text 400/413/415/422 (REQ-ERR-001/AC1, REQ-PRX-009/AC2).
+struct EnvelopeJson<T>(T);
+impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequest<S> for EnvelopeJson<T> {
+    type Rejection = ApiError;
+    async fn from_request(req: Request, state: &S) -> Result<Self, ApiError> {
+        let rid = req.extensions().get::<RequestId>().map(|r| r.0.clone());
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(v)| Self(v))
+            .map_err(|rej| with_request_id(json_rejection(&rej), rid))
+    }
+}
+fn json_rejection(rej: &JsonRejection) -> ApiError {
+    let code = if rej.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ErrorCode::PayloadTooLarge
+    } else {
+        ErrorCode::RequestInvalid
+    };
+    ApiError::new(code, rej.body_text())
+}
+
+/// `Query<T>` with the same envelope rejection.
+struct EnvelopeQuery<T>(T);
+impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequestParts<S> for EnvelopeQuery<T> {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, ApiError> {
+        let rid = parts.extensions.get::<RequestId>().map(|r| r.0.clone());
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(v)| Self(v))
+            .map_err(|rej: QueryRejection| {
+                with_request_id(
+                    ApiError::new(ErrorCode::RequestInvalid, rej.body_text()),
+                    rid,
+                )
+            })
+    }
+}
+fn with_request_id(e: ApiError, rid: Option<String>) -> ApiError {
+    match rid {
+        Some(id) => e.request_id(id),
+        None => e,
+    }
+}
+
 async fn h_ensure(
     State(api): State<Arc<ControlApi>>,
-    Json(req): Json<EnsureRequest>,
+    Extension(rid): Extension<RequestId>,
+    EnvelopeJson(req): EnvelopeJson<EnsureRequest>,
 ) -> axum::response::Response {
+    let rid = rid.0;
     let profile = req.profile.clone();
     match api.ensure(req, &ProgressSink::None).await {
         EnsureOutcome::Loaded {
@@ -461,14 +518,17 @@ async fn h_ensure(
             ),
             &i,
         )
+        .request_id(&rid)
         .into_response(),
         EnsureOutcome::Bad(e) => ApiError::new(
             ErrorCode::ModelNotFound,
             format!("unknown model '{profile}': {e}"),
         )
+        .request_id(&rid)
         .into_response(),
         EnsureOutcome::Err(e) => {
             ApiError::new(ErrorCode::RuntimeStartFailed, format!("load failed: {e}"))
+                .request_id(&rid)
                 .into_response()
         }
     }
@@ -476,7 +536,7 @@ async fn h_ensure(
 
 async fn h_ensure_stream(
     State(api): State<Arc<ControlApi>>,
-    Query(req): Query<EnsureRequest>,
+    EnvelopeQuery(req): EnvelopeQuery<EnsureRequest>,
 ) -> axum::response::Response {
     let (ptx, prx) = mpsc::channel::<Stage>(16);
     let a = api.clone();
@@ -590,11 +650,12 @@ async fn h_chat(
 }
 
 /// Any path no route claims: `/v1/*` endpoints we do not implement, and everything else (REQ-PRX-020).
-async fn h_not_supported(uri: axum::http::Uri) -> ApiError {
+async fn h_not_supported(Extension(rid): Extension<RequestId>, uri: axum::http::Uri) -> ApiError {
     ApiError::new(
         ErrorCode::EndpointNotSupported,
         format!("{} is not supported", uri.path()),
     )
+    .request_id(rid.0)
 }
 
 /// Every path `router()` can serve. Must equal the policy's path set (REQ-SEC-001/AC3).
@@ -984,15 +1045,18 @@ mod tests {
             .iter()
             .map(|(k, p)| (k.to_string(), p.clone()))
             .collect();
-        let api = Arc::new(ControlApi::new(
-            profiles,
-            fake.base_url(),
-            None,
-            token.map(str::to_string),
-            0.0,
-            0.0,
-            tx,
-        ));
+        let api = Arc::new(
+            ControlApi::new(
+                profiles,
+                fake.base_url(),
+                None,
+                token.map(str::to_string),
+                0.0,
+                0.0,
+                tx,
+            )
+            .unwrap(),
+        );
         let http = reqwest::Client::new();
         for _ in 0..20 {
             let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -1171,6 +1235,10 @@ mod tests {
         assert_eq!(
             v["error"]["message"],
             "unknown model 'Z': unknown profile 'Z'"
+        );
+        assert!(
+            v["error"]["request_id"].is_string(),
+            "the envelope body carries the request id (REQ-PRX-009/AC2)"
         );
     }
 

@@ -9,15 +9,18 @@ async fn occupied_control_port_produces_an_error_event() {
     let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = holder.local_addr().unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-    let api = Arc::new(ControlApi::new(
-        Default::default(),
-        "http://127.0.0.1:1".into(),
-        None,
-        None,
-        0.0,
-        0.0,
-        tx,
-    ));
+    let api = Arc::new(
+        ControlApi::new(
+            Default::default(),
+            "http://127.0.0.1:1".into(),
+            None,
+            None,
+            0.0,
+            0.0,
+            tx,
+        )
+        .unwrap(),
+    );
     serve(api, addr).await; // returns once binding failed
     let ev = rx.recv().await.unwrap();
     match ev {

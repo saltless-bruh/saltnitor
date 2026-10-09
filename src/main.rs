@@ -181,6 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut token_notes = Vec::new();
     let control_token = match config_v1::resolve_control_token(
         &toml_conf,
+        &loaded.path,
         &|k| std::env::var(k).ok(),
         &mut token_notes,
     ) {
@@ -194,6 +195,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("saltnitor: {n}");
     }
     config_notes.extend(token_notes);
+    let proxy_limits =
+        proxy_stream::ProxyLimits::from_config(&toml_conf.timeouts, toml_conf.max_body_bytes);
+    if let Err(e) = proxy_stream::upstream_client(&proxy_limits) {
+        eprintln!("saltnitor: {e}"); // before any listener or the terminal (REQ-ERR-005/AC1)
+        std::process::exit(1);
+    }
 
     // 1. Load Configuration
     let final_port = cli.port.or(toml_conf.port).unwrap_or(8080);
@@ -329,11 +336,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 toml_conf.reserve_ram_gb.unwrap_or(1.0),
                 tx.clone(),
             )
-            .allow_query_token(toml_conf.allow_query_token.unwrap_or(false))
-            .limits(proxy_stream::ProxyLimits::from_config(
-                &toml_conf.timeouts,
-                toml_conf.max_body_bytes,
-            )),
+            .and_then(|c| {
+                c.allow_query_token(toml_conf.allow_query_token.unwrap_or(false))
+                    .limits(proxy_limits)
+            })?,
         );
         if toml_conf.allow_query_token.unwrap_or(false) {
             let warning = "saltnitor: security: allow_query_token=true — ?token= is accepted on GET /v1/ensure/stream only; the value is redacted in logs";

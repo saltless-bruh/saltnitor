@@ -72,7 +72,9 @@ pub async fn rig(s: Scenario, upstream_bearer: Option<&str>, limits: ProxyLimits
             0.0,
             tx,
         )
-        .limits(limits),
+        .unwrap()
+        .limits(limits)
+        .unwrap(),
     );
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()

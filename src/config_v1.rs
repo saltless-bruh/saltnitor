@@ -302,7 +302,15 @@ fn toml_error(file: &Path, text: &str, key: &str, e: &toml::de::Error) -> Config
         }
         None => (None, None),
     };
-    let (key, expected, found, hint) = humanize(key, e.message());
+    let (key, expected, mut found, hint) = humanize(key, e.message());
+    if is_secret_key(&key) && !found.starts_with("unknown key") {
+        // INV-16: serde echoes the offending value ("integer `12345`"); for a secret keep the type only.
+        found = found
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+    }
     ConfigError {
         file: file.to_path_buf(),
         line,
@@ -319,6 +327,15 @@ fn line_col(text: &str, offset: usize) -> (usize, usize) {
     let line = before.matches('\n').count() + 1;
     let col = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
     (line, col)
+}
+
+/// Keys whose values are credentials (or name where one lives): diagnostics never print their values.
+fn is_secret_key(key: &str) -> bool {
+    let leaf = key.rsplit('.').next().unwrap_or(key);
+    matches!(leaf, "control_token" | "infer_bearer" | "control_token_env")
+        || leaf.ends_with("_token")
+        || leaf.ends_with("_bearer")
+        || leaf.ends_with("_key")
 }
 
 /// Turn serde's wording into the REQ-CFG-003/AC2 shape: (key, expected, found, hint).
@@ -454,11 +471,12 @@ pub fn validate_key_file(
 /// Exactly one of `control_token` (deprecated literal), `control_token_env`, `control_token_file`.
 pub fn resolve_control_token(
     cfg: &ConfigV1,
+    config_file: &Path,
     env: Env,
     notes: &mut Vec<String>,
 ) -> Result<Option<String>, ConfigError> {
     let err = |key: &str, expected: &str, found: String| ConfigError {
-        file: PathBuf::from("config.toml"),
+        file: config_file.to_path_buf(),
         line: None,
         col: None,
         key: key.into(),

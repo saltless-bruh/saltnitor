@@ -76,11 +76,11 @@ async fn upstream_errors_pass_through_byte_exact() {
     }
 }
 
-/// Verifies: REQ-PRX-008/AC2 — the connection dies before any response header was written.
-/// The fake cannot do this (its faults always write headers), so the runtime here is a bare
-/// listener: it reports model A as loaded, then closes the socket on the chat request.
-#[tokio::test]
-async fn a_connection_closed_before_headers_is_502_runtime_unhealthy() {
+/// A bare-listener runtime: it reports model A as loaded, then answers the chat request with
+/// `chat_reply` (`None` closes the socket without writing a byte). The fake cannot do either of
+/// these: its faults always write a well-formed status line and headers. Returns the proxy's
+/// response to a chat request.
+async fn chat_against_bare_runtime(chat_reply: Option<&'static [u8]>) -> reqwest::Response {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream = listener.local_addr().unwrap();
@@ -97,8 +97,10 @@ async fn a_connection_closed_before_headers_is_502_runtime_unhealthy() {
                         body.len()
                     );
                     let _ = sock.write_all(head.as_bytes()).await;
+                } else if let Some(reply) = chat_reply {
+                    let _ = sock.write_all(reply).await;
                 }
-                // Anything else (the chat request): close without writing a byte.
+                // Otherwise (the chat request, `None`): close without writing a byte.
             });
         }
     });
@@ -113,7 +115,9 @@ async fn a_connection_closed_before_headers_is_502_runtime_unhealthy() {
             0.0,
             tx,
         )
-        .limits(short()),
+        .unwrap()
+        .limits(short())
+        .unwrap(),
     );
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -122,13 +126,38 @@ async fn a_connection_closed_before_headers_is_502_runtime_unhealthy() {
         .port();
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tokio::spawn(serve(api, addr));
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/v1/chat/completions"))
+    let http = reqwest::Client::new();
+    for _ in 0..100 {
+        if http
+            .get(format!("http://{addr}/healthz"))
+            .send()
+            .await
+            .is_ok_and(|r| r.status() == 200)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    http.post(format!("http://{addr}/v1/chat/completions"))
         .body(r#"{"model":"A"}"#)
         .send()
         .await
-        .unwrap();
+        .unwrap()
+}
+
+/// Verifies: REQ-PRX-008/AC2 — the connection dies before any response header was written
+#[tokio::test]
+async fn a_connection_closed_before_headers_is_502_runtime_unhealthy() {
+    let resp = chat_against_bare_runtime(None).await;
+    assert_eq!(resp.status(), 502);
+    let v: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(v["error"]["code"], "RUNTIME_UNHEALTHY");
+}
+
+/// Verifies: REQ-PRX-008/AC2 — a malformed response (no valid status line) gets the same envelope
+#[tokio::test]
+async fn a_malformed_status_line_is_502_runtime_unhealthy() {
+    let resp = chat_against_bare_runtime(Some(b"garbage\r\n\r\n")).await;
     assert_eq!(resp.status(), 502);
     let v: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(v["error"]["code"], "RUNTIME_UNHEALTHY");
@@ -150,7 +179,7 @@ async fn hang_before_headers_is_504() {
     assert_eq!(v["error"]["code"], "UPSTREAM_TIMEOUT");
 }
 
-/// Verifies: REQ-PRX-011/AC1, REQ-PRX-010/AC1 (idle timeout)
+/// Verifies: REQ-PRX-011/AC1 — a runtime crash mid-stream truncates the body (an error, never a clean end)
 #[tokio::test]
 async fn mid_stream_crash_truncates_without_done_and_logs_the_abort() {
     let mut r = rig(scenario(Fault::CrashAfter { chunks: 2 }), None, limits()).await;
@@ -163,12 +192,15 @@ async fn mid_stream_crash_truncates_without_done_and_logs_the_abort() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    let got = resp.bytes().await; // reqwest reports the truncation as an error
-    let text = match got {
-        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
-        Err(_) => String::new(),
-    };
-    assert!(!text.contains("[DONE]"), "no synthetic [DONE]: {text}");
+    // The truncation must reach the client as a body error; a clean Ok would hide the crash.
+    let err = resp
+        .bytes()
+        .await
+        .expect_err("a crashed stream must not end cleanly");
+    assert!(
+        err.is_body() || err.is_decode() || err.is_request(),
+        "{err:?}"
+    );
     tokio::time::sleep(Duration::from_millis(50)).await;
     let mut logged = false;
     while let Ok(ev) = rx.try_recv() {
@@ -179,16 +211,20 @@ async fn mid_stream_crash_truncates_without_done_and_logs_the_abort() {
         }
     }
     assert!(logged, "abort must be recorded with the request id");
-    // idle timeout: a stream that stalls longer than idle_ms is aborted the same way
-    let r2 = rig(
+}
+
+/// Verifies: REQ-PRX-010/AC1 — a stream that stalls longer than idle_ms is aborted, not completed
+#[tokio::test]
+async fn an_idle_stall_aborts_the_stream_before_the_next_chunk() {
+    let r = rig(
         scenario(raw(&["data: a\n\n", "data: b\n\n"], 2_000)),
         None,
         short(),
     )
     .await;
-    let resp = r2
+    let resp = r
         .http
-        .post(format!("{}/v1/chat/completions", r2.base))
+        .post(format!("{}/v1/chat/completions", r.base))
         .body(r#"{"model":"A","stream":true}"#)
         .send()
         .await
@@ -199,7 +235,7 @@ async fn mid_stream_crash_truncates_without_done_and_logs_the_abort() {
         t.elapsed() < Duration::from_millis(1_500),
         "idle_ms=300 must abort before the 2 s chunk"
     );
-    assert!(got.map(|b| !b.ends_with(b"data: b\n\n")).unwrap_or(true));
+    assert!(got.is_err(), "the stalled stream must end with an error");
 }
 
 /// Verifies: REQ-PRX-017/AC1

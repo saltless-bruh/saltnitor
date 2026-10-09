@@ -35,6 +35,7 @@ async fn rig(
             0.0,
             tx,
         )
+        .unwrap()
         .allow_query_token(allow_query),
     );
     let port = std::net::TcpListener::bind("127.0.0.1:0")

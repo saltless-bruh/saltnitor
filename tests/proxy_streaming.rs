@@ -53,35 +53,50 @@ async fn first_chunk_is_forwarded_before_the_second_is_sent() {
 #[tokio::test]
 async fn status_and_end_to_end_headers_pass_hop_by_hop_dropped_request_id_added() {
     let fault = Fault::RawChunks {
-        items: vec!["x".into()],
+        items: vec!["x".into(), "y".into()],
         delay_ms: 0,
         code: 201,
         content_type: "text/plain".into(),
         headers: vec![
             ("cache-control".into(), "no-cache".into()),
             ("x-fake-upstream".into(), "1".into()),
+            // The hop-by-hop headers an upstream really sends (RFC 9110 §7.6.1):
+            ("connection".into(), "close".into()),
+            ("transfer-encoding".into(), "chunked".into()),
             ("keep-alive".into(), "timeout=5".into()),
             ("proxy-connection".into(), "keep-alive".into()),
+            // ...and an upstream request id, which must not become a second one downstream.
+            ("x-request-id".into(), "upstream-id".into()),
         ],
     };
     let r = rig(scenario(fault), None, limits()).await;
     let resp = r
         .http
         .post(format!("{}/v1/chat/completions", r.base))
+        .header("x-request-id", "client-id-1")
         .body(r#"{"model":"A"}"#)
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 201);
-    assert_eq!(resp.headers()["content-type"], "text/plain");
-    assert_eq!(resp.headers()["cache-control"], "no-cache");
-    assert_eq!(resp.headers()["x-fake-upstream"], "1");
+    let h = resp.headers().clone();
+    assert_eq!(h["content-type"], "text/plain");
+    assert_eq!(h["cache-control"], "no-cache");
+    assert_eq!(h["x-fake-upstream"], "1");
     assert!(
-        resp.headers().get("keep-alive").is_none()
-            && resp.headers().get("proxy-connection").is_none()
+        h.get("connection").is_none(),
+        "upstream `connection: close` must not be relayed"
     );
-    assert!(resp.headers().get("x-request-id").is_some());
-    assert_eq!(resp.text().await.unwrap(), "x");
+    assert!(h.get("keep-alive").is_none() && h.get("proxy-connection").is_none());
+    assert_eq!(
+        h.get_all("transfer-encoding").iter().count(),
+        1,
+        "exactly one transfer-encoding (the proxy's own framing): {h:?}"
+    );
+    let ids: Vec<_> = h.get_all("x-request-id").iter().collect();
+    assert_eq!(ids.len(), 1, "a single x-request-id: {ids:?}");
+    assert_eq!(ids[0], "client-id-1", "the proxy's id, not the upstream's");
+    assert_eq!(resp.text().await.unwrap(), "xy", "the body decodes cleanly");
 }
 
 /// Verifies: REQ-SEC-012/AC1, REQ-PRX-005/AC1
@@ -235,7 +250,18 @@ async fn request_ids_are_kept_when_valid_generated_otherwise_and_forwarded() {
 #[tokio::test]
 async fn non_string_model_or_non_object_body_is_400_and_never_forwarded() {
     let r = rig(scenario(raw(&["ok"], 0)), None, limits()).await;
-    for body in [r#"{"model":3}"#, r#"[{"model":"A"}]"#, "not json"] {
+    for body in [
+        r#"{"model":3}"#,
+        r#"[{"model":"A"}]"#,
+        "not json",
+        // A derived Deserialize also accepts a sequence: these must be refused as non-objects.
+        r#"["A"]"#,
+        "[]",
+        r#""A""#,
+        "null",
+        "3",
+        r#"{"model":null}"#,
+    ] {
         let resp = r
             .http
             .post(format!("{}/v1/chat/completions", r.base))
@@ -314,15 +340,18 @@ proptest! {
 async fn auth_rejections_carry_the_request_id() {
     let fake = fake_llama_server::spawn(scenario(raw(&["ok"], 0))).await;
     let (tx, _rx) = mpsc::channel(16);
-    let api = Arc::new(ControlApi::new(
-        HashMap::from([("A".to_string(), profile())]),
-        fake.base_url(),
-        None,
-        Some("secret-token".to_string()),
-        0.0,
-        0.0,
-        tx,
-    ));
+    let api = Arc::new(
+        ControlApi::new(
+            HashMap::from([("A".to_string(), profile())]),
+            fake.base_url(),
+            None,
+            Some("secret-token".to_string()),
+            0.0,
+            0.0,
+            tx,
+        )
+        .unwrap(),
+    );
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
