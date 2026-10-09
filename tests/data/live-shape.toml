@@ -1,0 +1,31 @@
+# Shape of the reference host's v1 config (values replaced). Loading this proves the strict
+# loader accepts the live key set (REQ-CFG-003 must never reject a valid live config).
+port = 8080
+host = "127.0.0.1"
+service_name = "llama-router"
+default_ngl = 33
+default_ctx = 8192
+control_port = 8765
+control_token = "REDACTED"
+router_base = "http://127.0.0.1:8080"
+infer_bearer = "REDACTED"
+reserve_vram_gb = 0.8
+reserve_ram_gb = 1.0
+
+[profiles.A_STD]
+model = "model.gguf"
+offload = false
+est_vram_gb = 9.0
+est_ram_gb = 0.0
+
+[profiles.A_FOCUS]
+model = "model.gguf"
+offload = false
+est_vram_gb = 11.0
+est_ram_gb = 0.0
+
+[profiles.B]
+model = "model.gguf"
+offload = true
+est_vram_gb = 9.0
+est_ram_gb = 18.0

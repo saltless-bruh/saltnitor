@@ -243,7 +243,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Not in scope:** changing the tuner's write model (P4).
   - **Done when:** `git grep -n -e 'sk-saltnitor-2026' -e '/home/laz' -- ':!docs/specs'` is empty and the ratchet file has shrunk.
 
-- [ ] **T1.7 — Strict config loading (schema v1)** · *test-first*
+- [x] **T1.7 — Strict config loading (schema v1)** · *test-first*
   - **Reqs:** REQ-CFG-001, REQ-CFG-002, REQ-CFG-003, REQ-CFG-004, REQ-CFG-005/AC2, REQ-CFG-007, REQ-TST-001
   - **Depends:** T1.3
   - **Files:** `src/config_v1.rs` (new), `src/main.rs` (`load_config`), `tests/config_strict.rs`

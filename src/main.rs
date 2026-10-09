@@ -5,6 +5,7 @@
 )]
 
 mod app;
+mod config_v1;
 mod control_api;
 mod events;
 mod ui;
@@ -19,7 +20,6 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use reqwest::Client;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -42,50 +42,28 @@ struct Cli {
 
     #[arg(short, long)]
     service_name: Option<String>,
+
+    /// Config file to load (default: $XDG_CONFIG_HOME/saltnitor/config.toml, then ~/.config/...).
+    #[arg(long, value_name = "FILE")]
+    config: Option<std::path::PathBuf>,
 }
 
-// --- TOML Configuration Struct ---
-#[derive(Deserialize, Default, Debug)]
-struct TomlConfig {
-    port: Option<u16>,
-    host: Option<String>,
-    service_name: Option<String>,
-    default_ngl: Option<i32>,
-    default_ctx: Option<i32>,
-    // --- Control API (native-router edition; Saltcode headless hot-swap bridge) ---
-    control_port: Option<u16>,
-    control_token: Option<String>,
-    router_base: Option<String>,
-    infer_bearer: Option<String>,
-    /// Path of the router preset INI the tuner edits (REQ-SEC-013). Unset: tuner refuses to apply.
-    router_ini: Option<String>,
-    /// Name of the env var holding the bearer the TUI sends on its own calls (REQ-SEC-013).
-    client_key_env: Option<String>,
-    reserve_vram_gb: Option<f64>,
-    reserve_ram_gb: Option<f64>,
-    #[serde(default)]
-    profiles: HashMap<String, control_api::ProfileMeta>,
-}
-
-// --- Sudo-Aware Config Loader ---
-fn load_config() -> TomlConfig {
-    let mut config_path = std::path::PathBuf::new();
-
-    // Intelligently bypass the Sudo Trap
-    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
-        config_path.push(format!("/home/{}/.config/saltnitor/config.toml", sudo_user));
-    } else if let Some(home) = std::env::var_os("HOME") {
-        config_path.push(home);
-        config_path.push(".config/saltnitor/config.toml");
-    } else {
-        return TomlConfig::default();
-    }
-
-    if let Ok(content) = std::fs::read_to_string(config_path) {
-        toml::from_str(&content).unwrap_or_default()
-    } else {
-        TomlConfig::default()
-    }
+/// Oracle metadata per profile, in the shape `control_api` consumes.
+fn profile_metas(cfg: &config_v1::ConfigV1) -> HashMap<String, control_api::ProfileMeta> {
+    cfg.profiles
+        .iter()
+        .map(|(id, p)| {
+            (
+                id.clone(),
+                control_api::ProfileMeta {
+                    model: p.model.clone(),
+                    offload: p.offload,
+                    est_vram_gb: p.est_vram_gb,
+                    est_ram_gb: p.est_ram_gb,
+                },
+            )
+        })
+        .collect()
 }
 
 // --- Pre-Flight Dependency Checker ---
@@ -114,14 +92,6 @@ fn check_dependencies() -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-/// The bearer the TUI sends on its own HTTP calls: read from the env var named by
-/// `client_key_env` (REQ-SEC-013). Never a literal, never logged.
-fn client_bearer(env_name: Option<&str>) -> Option<String> {
-    env_name
-        .and_then(|n| std::env::var(n).ok())
-        .filter(|v| !v.is_empty())
 }
 
 /// Upsert `kv` into the `[section]` block of an INI string, preserving every other
@@ -169,17 +139,28 @@ fn upsert_ini_section(content: &str, section: &str, kv: &[(String, String)]) -> 
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 0. Parse Command Line Arguments
     let cli = Cli::parse();
-    let toml_conf = load_config();
+    let loaded = match config_v1::load(cli.config.as_deref(), &|k| std::env::var(k).ok()) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("saltnitor: invalid config (CONFIG_INVALID)\n{e}");
+            std::process::exit(2); // before any listener, task, or child (REQ-CFG-003/AC1)
+        }
+    };
+    for n in &loaded.notes {
+        eprintln!("saltnitor: {n}"); // REQ-CFG-001/AC2
+    }
+    let config_notes = loaded.notes.clone();
+    let toml_conf = loaded.config;
 
     // 1. Load Configuration
     let final_port = cli.port.or(toml_conf.port).unwrap_or(8080);
     let final_host = cli
         .host
-        .or(toml_conf.host)
+        .or(toml_conf.host.clone())
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let final_svc = cli
         .service_name
-        .or(toml_conf.service_name)
+        .or(toml_conf.service_name.clone())
         .unwrap_or_else(|| "llama-router".to_string());
     let final_ngl = toml_conf.default_ngl.unwrap_or(33);
     let final_ctx = toml_conf.default_ctx.unwrap_or(8192);
@@ -252,7 +233,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         final_ctx,
     );
     app.router_ini = toml_conf.router_ini.clone();
-    app.client_bearer = client_bearer(toml_conf.client_key_env.as_deref());
+    app.client_bearer = config_v1::client_bearer(toml_conf.client_key_env.as_deref());
+    for n in &config_notes {
+        app.add_log(format!(">>> CONFIG: {n}"));
+    }
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
     // --- Headless Control API (Saltcode native-router bridge) ---
@@ -260,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // VRAM oracle + /v1/ensure that the router itself lacks. Binds 127.0.0.1 only.
     {
         let controller = Arc::new(control_api::ControlApi::new(
-            toml_conf.profiles.clone(),
+            profile_metas(&toml_conf),
             toml_conf
                 .router_base
                 .clone()
@@ -1063,7 +1047,7 @@ mod tests {
     // tests may unwrap: a panic is the failure signal (REQ-CI-007 scopes the deny to non-test code)
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{client_bearer, upsert_ini_section};
+    use super::upsert_ini_section;
 
     fn kv(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -1137,18 +1121,5 @@ mod tests {
             upsert_ini_section(ini, "B", &kv(&[("n", "7")])).as_deref(),
             Some("[A]\nk = 1\n[B]\nn = 7\n[C]\nn = 3\n")
         );
-    }
-
-    /// Verifies: REQ-SEC-013/AC1
-    #[test]
-    fn client_bearer_comes_only_from_the_named_env_var() {
-        // SAFETY (test): single-threaded access to this unique variable name.
-        unsafe { std::env::set_var("SALTNITOR_T16_KEY", "k-from-env") };
-        assert_eq!(
-            client_bearer(Some("SALTNITOR_T16_KEY")).as_deref(),
-            Some("k-from-env")
-        );
-        assert_eq!(client_bearer(Some("SALTNITOR_T16_MISSING")), None);
-        assert_eq!(client_bearer(None), None);
     }
 }
