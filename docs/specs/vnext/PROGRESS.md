@@ -20,3 +20,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-09-29 · G0 · 574f46c · READY · R1 PASS on Codacus runtime; all rows confirmed; awaiting operator verdict
 2026-09-29 · G0 · c155628 · PASSED · operator verdict signed (laz); Phase 0 complete — next: vnext→master PR review, then P1
 2026-10-09 · T1.0 · f5febd7 · DONE · 15 tests, red for missing auth middleware/envelope (BD-03/04), buffered proxy (BD-02), config fallback to defaults (BD-01), no cancellation propagation, no saltnitor::process API (g1_process does not compile); approval = PR review
+2026-10-09 · T1.1 · 22e918c · DONE · Cargo.lock tracked (BD-08 fixed); rust-version 1.95; toolchain pinned

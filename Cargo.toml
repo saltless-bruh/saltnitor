@@ -2,6 +2,7 @@
 name = "saltnitor"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.95"   # sysinfo 0.39 requires 1.95; CI's msrv job builds with exactly this
 
 [dependencies]
 crossterm = "0.29.0"

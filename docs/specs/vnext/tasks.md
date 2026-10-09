@@ -203,7 +203,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** a session that will **not** implement P1 writes the acceptance tests for the G1 rows below, black-box against the built binary plus the fake runtime: first SSE chunk before completion; byte-exact bodies; cancellation; 401 on every protected route; query token refused by default; malformed config → exit 2 with the diagnostic, port free; terminating by PID through the process-control module API leaves a same-named process alive (the TUI path is demonstrated in D3). Also one compositional scenario: auth + streaming + request ID + cancellation in one flow. CI runs the `acceptance` target as informational until G1.
   - **Done when:** the acceptance target is declared `test = false`; the tests compile, except tests that call a Phase 1 API the author names in `tests/acceptance/README.md`, which may fail to compile only for that reason; each test fails for the right reason against the current code (record the failure output); and the operator approves them via CODEOWNERS review (CR-7).
 
-- [ ] **T1.1 — Lockfile and toolchain**
+- [x] **T1.1 — Lockfile and toolchain**
   - **Reqs:** REQ-REPO-001, REQ-REPO-008, REQ-REL-006
   - **Files:** `.gitignore`, `Cargo.lock`, `Cargo.toml` (`rust-version`), `rust-toolchain.toml`
   - **Done when:** `git ls-files Cargo.lock` is non-empty; `grep -n "Cargo.lock" .gitignore` finds nothing; `cargo build --locked` succeeds.
