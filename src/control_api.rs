@@ -642,6 +642,7 @@ pub fn router(api: Arc<ControlApi>, auth: Arc<crate::auth::AuthState>) -> Result
 /// Spawn from main.rs: `tokio::spawn(control_api::serve(api, addr));`
 pub async fn serve(api: Arc<ControlApi>, addr: std::net::SocketAddr) {
     let log_tx = api.tx.clone();
+    let api_tx = api.tx.clone();
     let auth = crate::auth::AuthState::new(
         api.control_token.clone(),
         api.allow_query_token,
@@ -652,7 +653,12 @@ pub async fn serve(api: Arc<ControlApi>, addr: std::net::SocketAddr) {
     let app = match router(api, auth) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("[control_api] {e}"); // becomes Event::Error in T1.14
+            let _ = api_tx
+                .send(Event::Error {
+                    source: "control_api".into(),
+                    message: format!("cannot build router: {e}"),
+                })
+                .await;
             return;
         }
     };
@@ -664,7 +670,14 @@ pub async fn serve(api: Arc<ControlApi>, addr: std::net::SocketAddr) {
             )
             .await;
         }
-        Err(e) => eprintln!("[control_api] bind {} failed: {}", addr, e),
+        Err(e) => {
+            let _ = api_tx
+                .send(Event::Error {
+                    source: "control_api".into(),
+                    message: format!("bind {addr} failed: {e}"),
+                })
+                .await;
+        }
     }
 }
 

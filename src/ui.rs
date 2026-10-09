@@ -488,13 +488,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Span::raw("] "),
     ])
     .alignment(ratatui::layout::Alignment::Right);
+    let error_title = app.last_error.as_ref().map(|e| {
+        Line::from(Span::styled(
+            format!(" ⚠ {e} "),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(ratatui::layout::Alignment::Center)
+    });
+    let mut logs_block = Block::default()
+        .title(logs_title)
+        .title(port_title)
+        .borders(Borders::ALL);
+    if let Some(t) = error_title {
+        logs_block = logs_block.title(t);
+    }
     let logs_list = List::new(log_items)
-        .block(
-            Block::default()
-                .title(logs_title)
-                .title(port_title)
-                .borders(Borders::ALL),
-        )
+        .block(logs_block.borders(Borders::ALL))
         .highlight_style(
             Style::default()
                 .add_modifier(Modifier::REVERSED)
@@ -1271,6 +1280,14 @@ mod tests {
         app.is_searching = true;
         app.search_query = "loaded".into();
         insta::assert_snapshot!("search", render(&mut app, 100, 30));
+    }
+
+    /// Verifies: REQ-ERR-005/AC1
+    #[test]
+    fn dashboard_with_error() {
+        let mut app = fixture();
+        app.last_error = Some("control_api: bind 127.0.0.1:8765 failed".into());
+        insta::assert_snapshot!("dashboard_with_error", render(&mut app, 100, 30));
     }
 
     /// Verifies: REQ-MIG-005/AC1, REQ-TUI-009/AC1, REQ-MIG-007/AC4

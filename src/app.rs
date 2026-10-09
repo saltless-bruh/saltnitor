@@ -115,6 +115,8 @@ pub struct App {
     pub hot_swap_state: ListState,
     pub available_models: Vec<String>,
     pub active_model: String,
+    /// Latest background failure, shown in the log header (REQ-ERR-005/AC1)
+    pub last_error: Option<String>,
 
     pub port_status: String,
     pub logs: VecDeque<String>,
@@ -222,6 +224,7 @@ impl App {
             hot_swap_state: ListState::default(),
             available_models: Vec::new(),
             active_model: "None".to_string(),
+            last_error: None,
 
             port_status,
             log_state,

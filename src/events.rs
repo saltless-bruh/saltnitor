@@ -51,4 +51,9 @@ pub enum Event {
     PortAudit(String),
     /// Control API → the currently-resident model changed (reflects headless swaps in the TUI)
     ActiveModelSet(String),
+    /// A background failure the operator must see (REQ-ERR-005/AC1)
+    Error {
+        source: String,
+        message: String,
+    },
 }

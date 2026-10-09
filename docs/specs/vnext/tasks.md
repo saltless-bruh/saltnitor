@@ -293,7 +293,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** `ProcessInfo` per PID; GPU apps queried with `pid`; SIGTERM → wait → report; SIGKILL as a separate confirmed action; identity check (start time + UID; pidfd where available); protected targets; `killall` removed from code and preflight; inspector keys `x`/`X` and help text updated.
   - **Done when:** the test kills one of two same-named `sleep` processes by PID and the other survives; identity-mismatch and protected-PID refusals are tested; the ratchet has no kill-by-name entries.
 
-- [ ] **T1.14 — Error surfacing and panic removal**
+- [x] **T1.14 — Error surfacing and panic removal**
   - **Reqs:** REQ-ERR-004/AC1, REQ-ERR-005/AC1
   - **Depends:** T1.8
   - **Files:** `src/main.rs`, `src/control_api.rs`

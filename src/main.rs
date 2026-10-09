@@ -1,9 +1,3 @@
-#![expect(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    reason = "removed by T1.14 (REQ-ERR-004); expect warns once no unwrap remains"
-)]
-
 use app::App;
 use clap::Parser;
 use crossterm::{
@@ -340,11 +334,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Task A: Keyboard Input Stream
     tokio::spawn(async move {
         loop {
-            if event::poll(Duration::from_millis(250)).unwrap()
-                && let CEvent::Key(key) = event::read().unwrap()
-                && tx_keys.send(Event::Key(key)).await.is_err()
-            {
-                break;
+            match event::poll(Duration::from_millis(250)) {
+                Ok(true) => match event::read() {
+                    Ok(CEvent::Key(key)) => {
+                        if tx_keys.send(Event::Key(key)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = tx_keys
+                            .send(Event::Error {
+                                source: "keys".into(),
+                                message: format!("terminal read failed: {e}"),
+                            })
+                            .await;
+                        break;
+                    }
+                },
+                Ok(false) => {}
+                Err(e) => {
+                    let _ = tx_keys
+                        .send(Event::Error {
+                            source: "keys".into(),
+                            message: format!("terminal poll failed: {e}"),
+                        })
+                        .await;
+                    break;
+                }
             }
         }
     });
@@ -466,13 +483,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_c = final_svc.clone();
     tokio::spawn(async move {
         // Stream the dynamic service logs asynchronously
-        let mut child = Command::new("journalctl")
+        let mut child = match Command::new("journalctl")
             .args(["-u", &service_c, "-f", "-n", "30"])
             .stdout(Stdio::piped())
             .spawn()
-            .expect("Failed to spawn journalctl");
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx_logs
+                    .send(Event::Error {
+                        source: "journal".into(),
+                        message: format!("cannot spawn journalctl: {e}"),
+                    })
+                    .await;
+                return;
+            }
+        };
 
-        let stdout = child.stdout.take().expect("Failed to capture stdout");
+        let Some(stdout) = child.stdout.take() else {
+            let _ = tx_logs
+                .send(Event::Error {
+                    source: "journal".into(),
+                    message: "cannot capture journalctl stdout".into(),
+                })
+                .await;
+            return;
+        };
         let mut reader = BufReader::new(stdout).lines();
 
         while let Ok(Some(line)) = reader.next_line().await {
@@ -1051,6 +1087,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Event::ActiveModelSet(m) => {
                         app.active_model = m.clone();
                         app.add_log(format!(">>> EXTERNAL: resident model is now {}", m));
+                    }
+                    Event::Error { source, message } => {
+                        app.last_error = Some(format!("{source}: {message}"));
+                        app.add_log(format!(">>> ERROR [{source}]: {message}"));
                     }
                     Event::Tick => {}
                 }
