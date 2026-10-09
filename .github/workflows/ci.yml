@@ -75,3 +75,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --test acceptance --locked
+
+  invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check-invariants.sh          # Verifies: REQ-CI-008/AC1, REQ-CI-008/AC3
+      - run: scripts/test-check-invariants.sh     # Verifies: REQ-CI-008/AC2
