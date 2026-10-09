@@ -6,7 +6,7 @@ ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
 BASE=docs/specs/vnext/evidence/test-baseline.txt
 [[ -f $BASE ]] || { echo "check-test-counts: missing $BASE"; exit 2; }
 LIST="$(mktemp)"; trap 'rm -f "$LIST"' EXIT
-cargo test --workspace --locked -- --list >"$LIST" 2>&1
+cargo test --workspace --locked --color never -- --list >"$LIST" 2>&1
 python3 - "$BASE" "$LIST" <<'PY'
 import re, sys
 base = {}
