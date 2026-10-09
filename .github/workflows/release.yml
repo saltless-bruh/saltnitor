@@ -26,8 +26,11 @@ jobs:
       - uses: actions/attest-build-provenance@v4
         with: { subject-path: dist/saltnitor-linux-amd64 }
       - uses: actions/upload-artifact@v7
-        with: { name: saltnitor-${{ github.sha }}, path: dist/ }
+        with:
+          name: saltnitor-${{ github.sha }}
+          path: dist/
       - name: Upload to the GitHub release
-        if: github.event_name == 'release'      # Verifies: REQ-CI-004/AC2 (gh CLI, not the archived upload-release-asset)
-        env: { GH_TOKEN: "${{ github.token }}" }
+        if: github.event_name == 'release'      # Verifies: REQ-CI-004/AC2 (gh CLI, not the archived upload action)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" dist/saltnitor-linux-amd64 dist/SHA256SUMS --clobber
