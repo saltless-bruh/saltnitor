@@ -649,12 +649,11 @@ fn estimate_footprint(p: &ProfileMeta) -> (f64, f64) {
 fn parse_params_b(name: &str) -> Option<f64> {
     let up = name.to_uppercase().replace(['-', '_', '.'], " ");
     for w in up.split_whitespace() {
-        if let Some(s) = w.strip_suffix('B') {
-            if let Ok(n) = s.parse::<f64>() {
-                if (0.3..2000.0).contains(&n) {
-                    return Some(n);
-                }
-            }
+        if let Some(s) = w.strip_suffix('B')
+            && let Ok(n) = s.parse::<f64>()
+            && (0.3..2000.0).contains(&n)
+        {
+            return Some(n);
         }
     }
     None
@@ -939,15 +938,15 @@ mod tests {
             let task = tokio::spawn(serve(api.clone(), addr));
             let base = format!("http://{addr}");
             for _ in 0..50 {
-                if let Ok(r) = http.get(format!("{base}/healthz")).send().await {
-                    if r.status() == 200 {
-                        return Rig {
-                            base,
-                            fake,
-                            events,
-                            http,
-                        };
-                    }
+                if let Ok(r) = http.get(format!("{base}/healthz")).send().await
+                    && r.status() == 200
+                {
+                    return Rig {
+                        base,
+                        fake,
+                        events,
+                        http,
+                    };
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }

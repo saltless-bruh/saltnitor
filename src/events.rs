@@ -2,6 +2,10 @@ use crossterm::event::KeyEvent;
 
 /// Defines all possible events that can trigger a state change or render.
 #[derive(Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Event is split per screen in P2 (T2.7)"
+)]
 pub enum Event {
     /// A hardware telemetry update from sysinfo/nvidia-smi
     HardwareUpdate {

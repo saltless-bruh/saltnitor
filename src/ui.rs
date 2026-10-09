@@ -284,8 +284,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .map(|i| format!("C{}", i))
             .collect();
         let mut barchart_data: Vec<(&str, u64)> = Vec::new();
-        for i in 0..app.cpu_cores.len() {
-            barchart_data.push((&labels[i], app.cpu_cores[i] as u64));
+        for (label, core) in labels.iter().zip(app.cpu_cores.iter()) {
+            barchart_data.push((label, *core as u64));
         }
 
         // --- FIXED: Increased bar_gap to 2 to stretch the graph evenly ---
@@ -618,24 +618,25 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             let mut line_spans = vec![Span::raw(format!("  {:<50} ", model))];
 
             // Inject VRAM Oracle directly inline for the highlighted model!
-            if Some(i) == selected_idx && app.console_focused {
-                if let Some(est) = estimate_vram(model, app.current_ctx) {
-                    if app.vram_total > 0.0 && est > app.vram_total {
-                        line_spans.push(Span::styled(
-                            format!(
-                                "[Oracle: {:.1} GB / {:.1} GB - HYBRID]",
-                                est, app.vram_total
-                            ),
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                        ));
-                    } else {
-                        line_spans.push(Span::styled(
-                            format!("[Oracle: {:.1} GB / {:.1} GB - SAFE]", est, app.vram_total),
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
+            if Some(i) == selected_idx
+                && app.console_focused
+                && let Some(est) = estimate_vram(model, app.current_ctx)
+            {
+                if app.vram_total > 0.0 && est > app.vram_total {
+                    line_spans.push(Span::styled(
+                        format!(
+                            "[Oracle: {:.1} GB / {:.1} GB - HYBRID]",
+                            est, app.vram_total
+                        ),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ));
+                } else {
+                    line_spans.push(Span::styled(
+                        format!("[Oracle: {:.1} GB / {:.1} GB - SAFE]", est, app.vram_total),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ));
                 }
             }
             items.push(ListItem::new(Line::from(line_spans)));
@@ -1018,12 +1019,12 @@ fn estimate_vram(model: &str, ctx: i32) -> Option<f64> {
         .replace("_", " ")
         .split_whitespace()
     {
-        if word.ends_with("B") {
-            if let Ok(p) = word.trim_end_matches('B').parse::<f64>() {
-                params = p;
-                param_found = true;
-                break;
-            }
+        if word.ends_with("B")
+            && let Ok(p) = word.trim_end_matches('B').parse::<f64>()
+        {
+            params = p;
+            param_found = true;
+            break;
         }
     }
 

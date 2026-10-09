@@ -116,8 +116,8 @@ fn upsert_ini_section(content: &str, section: &str, kv: &[(String, String)]) -> 
 
     let start = lines.iter().position(|l| l.trim() == header)?;
     let mut end = lines.len();
-    for i in (start + 1)..lines.len() {
-        let t = lines[i].trim();
+    for (i, line) in lines.iter().enumerate().skip(start + 1) {
+        let t = line.trim();
         if t.starts_with('[') && t.ends_with(']') {
             end = i;
             break;
@@ -130,12 +130,13 @@ fn upsert_ini_section(content: &str, section: &str, kv: &[(String, String)]) -> 
         let trimmed = line.trim_start();
         let is_comment = trimmed.starts_with(';') || trimmed.starts_with('#');
         let key = trimmed.split('=').next().map(str::trim).unwrap_or("");
-        if !is_comment && !key.is_empty() {
-            if let Some(pos) = remaining.iter().position(|(k, _)| k == key) {
-                let (k, v) = remaining.remove(pos);
-                out.push(format!("{} = {}", k, v));
-                continue;
-            }
+        if !is_comment
+            && !key.is_empty()
+            && let Some(pos) = remaining.iter().position(|(k, _)| k == key)
+        {
+            let (k, v) = remaining.remove(pos);
+            out.push(format!("{} = {}", k, v));
+            continue;
         }
         out.push(line.clone());
     }
@@ -200,15 +201,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--format=csv,noheader,nounits",
         ])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let out = String::from_utf8_lossy(&output.stdout);
-            let parts: Vec<&str> = out.trim().split(", ").collect();
-            if parts.len() == 2 {
-                gpu_name = parts[0].to_string();
-                vram_total = parts[1].parse::<f64>().unwrap_or(1.0) / 1024.0;
-                has_nvidia = true;
-            }
+        let out = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = out.trim().split(", ").collect();
+        if parts.len() == 2 {
+            gpu_name = parts[0].to_string();
+            vram_total = parts[1].parse::<f64>().unwrap_or(1.0) / 1024.0;
+            has_nvidia = true;
         }
     }
 
@@ -265,12 +265,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Task A: Keyboard Input Stream
     tokio::spawn(async move {
         loop {
-            if event::poll(Duration::from_millis(250)).unwrap() {
-                if let CEvent::Key(key) = event::read().unwrap() {
-                    if tx_keys.send(Event::Key(key)).await.is_err() {
-                        break;
-                    }
-                }
+            if event::poll(Duration::from_millis(250)).unwrap()
+                && let CEvent::Key(key) = event::read().unwrap()
+                && tx_keys.send(Event::Key(key)).await.is_err()
+            {
+                break;
             }
         }
     });
@@ -309,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Top System RAM Culprits (Showing ALL processes > 1MB, Deduplicated)
             let mut procs: Vec<_> = sys.processes().values().collect();
-            procs.sort_by(|a, b| b.memory().cmp(&a.memory())); // Sort by memory descending first
+            procs.sort_by_key(|p| std::cmp::Reverse(p.memory())); // Sort by memory descending first
 
             let mut seen_names = std::collections::HashSet::new();
             let sys_processes: Vec<(String, f64)> = procs
@@ -357,22 +356,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // NVIDIA Metrics (Processes)
             let mut gpu_processes: Vec<(String, f64)> = Vec::new();
-            if has_nvidia {
-                if let Ok(output) = std::process::Command::new("nvidia-smi")
+            if has_nvidia
+                && let Ok(output) = std::process::Command::new("nvidia-smi")
                     .args([
                         "--query-compute-apps=process_name,used_memory",
                         "--format=csv,noheader,nounits",
                     ])
                     .output()
-                {
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    for line in out.lines() {
-                        let parts: Vec<&str> = line.split(", ").collect();
-                        if parts.len() == 2 {
-                            let name = parts[0].split('/').last().unwrap_or(parts[0]).to_string(); // Get just the exe name
-                            let mem = parts[1].parse::<f64>().unwrap_or(0.0) / 1024.0;
-                            gpu_processes.push((name, mem));
-                        }
+            {
+                let out = String::from_utf8_lossy(&output.stdout);
+                for line in out.lines() {
+                    let parts: Vec<&str> = line.split(", ").collect();
+                    if parts.len() == 2 {
+                        let name = parts[0]
+                            .split('/')
+                            .next_back()
+                            .unwrap_or(parts[0])
+                            .to_string(); // Get just the exe name
+                        let mem = parts[1].parse::<f64>().unwrap_or(0.0) / 1024.0;
+                        gpu_processes.push((name, mem));
                     }
                 }
             }
@@ -430,21 +432,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             // Ping the router's model manifest endpoint dynamically
             let url = format!("http://{}:{}/v1/models", host_d, port_d);
-            if let Ok(res) = client.get(&url).send().await {
-                if let Ok(json) = res.json::<serde_json::Value>().await {
-                    if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                        let models: Vec<String> = data
-                            .iter()
-                            .filter_map(|m| {
-                                m.get("id")
-                                    .and_then(|id| id.as_str())
-                                    .map(|s| s.to_string())
-                            })
-                            .collect();
+            if let Ok(res) = client.get(&url).send().await
+                && let Ok(json) = res.json::<serde_json::Value>().await
+                && let Some(data) = json.get("data").and_then(|d| d.as_array())
+            {
+                let models: Vec<String> = data
+                    .iter()
+                    .filter_map(|m| {
+                        m.get("id")
+                            .and_then(|id| id.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
 
-                        let _ = tx_models.send(Event::ModelsFetched(models)).await;
-                    }
-                }
+                let _ = tx_models.send(Event::ModelsFetched(models)).await;
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -512,8 +513,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.gpu_proc_state.select(Some(i));
                                 }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some(i) = app.gpu_proc_state.selected() {
-                                        if let Some((name, _)) = app.gpu_processes.get(i) {
+                                    if let Some(i) = app.gpu_proc_state.selected()
+                                        && let Some((name, _)) = app.gpu_processes.get(i) {
                                             let proc_name = name.clone();
                                             if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
                                             else {
@@ -521,7 +522,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
                                             }
                                         }
-                                    }
                                 }
                                 _ => {}
                             }
@@ -538,8 +538,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.sys_proc_state.select(Some(i));
                                 }
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    if let Some(i) = app.sys_proc_state.selected() {
-                                        if let Some((name, _)) = app.sys_processes.get(i) {
+                                    if let Some(i) = app.sys_proc_state.selected()
+                                        && let Some((name, _)) = app.sys_processes.get(i) {
                                             let proc_name = name.clone();
                                             if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
                                             else {
@@ -547,7 +547,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
                                             }
                                         }
-                                    }
                                 }
                                 _ => {}
                             }
@@ -556,7 +555,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('t') => app.show_tuner = false,
                                 KeyCode::Tab => { app.tuner_page = (app.tuner_page + 1) % 3; app.tuner_selected = 0; }
-                                KeyCode::Up => { if app.tuner_selected > 0 { app.tuner_selected -= 1; } }
+                                KeyCode::Up if app.tuner_selected > 0 => { app.tuner_selected -= 1; }
                                 KeyCode::Down => { let max_idx = match app.tuner_page { 0 => 9, 1 => 5, 2 => 5, _ => 0 }; if app.tuner_selected < max_idx { app.tuner_selected += 1; } }
                                 KeyCode::Left | KeyCode::Right => {
                                     let is_right = key.code == KeyCode::Right;
@@ -673,19 +672,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         app.hot_swap_state.select(Some(i));
                                     }
                                     KeyCode::Enter => {
-                                        if let Some(i) = app.hot_swap_state.selected() {
-                                            if let Some(chosen_model) = app.available_models.get(i).cloned() {
+                                        if let Some(i) = app.hot_swap_state.selected()
+                                            && let Some(chosen_model) = app.available_models.get(i).cloned() {
                                                 app.console_focused = false;
 
                                                 // 1. Calculate NGL
                                                 let mut auto_ngl = 99;
                                                 let model_upper = chosen_model.to_uppercase();
                                                 for word in model_upper.replace("-", " ").replace("_", " ").split_whitespace() {
-                                                    if word.ends_with("B") {
-                                                        if let Ok(p) = word.trim_end_matches('B').parse::<f64>() {
-                                                            if p > 14.0 { auto_ngl = 24; }
-                                                        }
-                                                    }
+                                                    if word.ends_with("B")
+                                                        && let Ok(p) = word.trim_end_matches('B').parse::<f64>()
+                                                            && p > 14.0 { auto_ngl = 24; }
                                                 }
 
                                                 // 2. Lock State
@@ -721,24 +718,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     }
                                                 });
                                             }
-                                        }
                                     }
                                     _ => {}
                                 }
                             } else { // INTERROGATOR MODE
                                 match key.code {
                                     KeyCode::Esc => app.console_focused = false, // Exit insert mode
-                                    KeyCode::Left => { if app.console_cursor > 0 { app.console_cursor -= 1; } }
-                                    KeyCode::Right => { if app.console_cursor < app.console_input.chars().count() { app.console_cursor += 1; } }
-                                    KeyCode::Up => {
-                                        if !app.console_history.is_empty() && app.history_index > 0 {
+                                    KeyCode::Left if app.console_cursor > 0 => { app.console_cursor -= 1; }
+                                    KeyCode::Right if app.console_cursor < app.console_input.chars().count() => { app.console_cursor += 1; }
+                                    KeyCode::Up
+                                        if !app.console_history.is_empty() && app.history_index > 0 => {
                                             app.history_index -= 1;
                                             app.console_input = app.console_history[app.history_index].clone();
                                             app.console_cursor = app.console_input.chars().count();
                                         }
-                                    }
-                                    KeyCode::Down => {
-                                        if app.history_index < app.console_history.len() {
+                                    KeyCode::Down
+                                        if app.history_index < app.console_history.len() => {
                                             app.history_index += 1;
                                             if app.history_index == app.console_history.len() {
                                                 app.console_input = String::new();
@@ -747,21 +742,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                             app.console_cursor = app.console_input.chars().count();
                                         }
-                                    }
                                     KeyCode::Char(c) => {
                                         let mut chars: Vec<char> = app.console_input.chars().collect();
                                         chars.insert(app.console_cursor, c);
                                         app.console_input = chars.into_iter().collect();
                                         app.console_cursor += 1;
                                     }
-                                    KeyCode::Backspace => {
-                                        if app.console_cursor > 0 {
+                                    KeyCode::Backspace
+                                        if app.console_cursor > 0 => {
                                             let mut chars: Vec<char> = app.console_input.chars().collect();
                                             chars.remove(app.console_cursor - 1);
                                             app.console_input = chars.into_iter().collect();
                                             app.console_cursor -= 1;
                                         }
-                                    }
                                     KeyCode::Delete => {
                                         let mut chars: Vec<char> = app.console_input.chars().collect();
                                         if app.console_cursor < chars.len() {
@@ -819,16 +812,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                             let line = buffer[..idx].trim().to_string();
                                                             buffer = buffer[idx+1..].to_string();
 
-                                                            if line.starts_with("data: ") {
-                                                                let data = &line[6..];
+                                                            if let Some(data) = line.strip_prefix("data: ") {
                                                                 if data == "[DONE]" { continue; }
-                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                                                                    if let Some(content) = json.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
+                                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+                                                                    && let Some(content) = json.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).and_then(|d| d.get("content")).and_then(|c| c.as_str()) {
                                                                         let clean_token = content.replace('\n', " ⏎ ");
                                                                         let _ = tx_api.send(Event::ApiStreamChunk(clean_token)).await;
                                                                         total_tokens += 1.0;
                                                                     }
-                                                                }
                                                             }
                                                         }
                                                     }

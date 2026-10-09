@@ -108,6 +108,10 @@ pub struct App {
 }
 
 impl App {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "App::new is restructured by the P2 TUI decomposition (T2.7)"
+    )]
     pub fn new(
         cpu_name: String,
         cpu_core_count: usize,
