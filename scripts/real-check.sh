@@ -5,6 +5,9 @@
 #
 #   scripts/real-check.sh --label NAME --a PROFILE --b PROFILE --yes
 #       [--router URL] [--control URL] [--config PATH]
+#   scripts/real-check.sh --print-token-source [--config PATH]
+#       prints which config source supplies the control token (literal|env|file|none) and exits;
+#       never prints the value and contacts nothing.
 # Requires: bash ≥ 4.4, curl, python3 ≥ 3.11 (tomllib), cargo, script (util-linux), ps.
 set -Eeuo pipefail
 for cmd in curl python3 cargo script ps; do
@@ -12,7 +15,7 @@ for cmd in curl python3 cargo script ps; do
 done
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
-LABEL="" A="" B="" YES=0
+LABEL="" A="" B="" YES=0 PRINT_SRC=0
 ROUTER="http://127.0.0.1:8080" CONTROL="http://127.0.0.1:8765"
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/saltnitor/config.toml"
 while [[ $# -gt 0 ]]; do
@@ -24,26 +27,56 @@ while [[ $# -gt 0 ]]; do
     --control) CONTROL=$2; shift 2 ;;
     --config) CONFIG=$2; shift 2 ;;
     --yes) YES=1; shift ;;
+    --print-token-source) PRINT_SRC=1; shift ;;
     *) echo "real-check: unknown argument $1" >&2; exit 2 ;;
   esac
 done
+[[ -r $CONFIG ]] || { echo "real-check: cannot read $CONFIG" >&2; exit 2; }
+
+# Secrets are read from the config into this process only; never printed or written.
+# The control token resolves the way the daemon resolves it (T1.10): exactly one of the literal
+# `control_token`, the env var named by `control_token_env`, or the contents of `control_token_file`.
+secrets=$(python3 - "$CONFIG" <<'PY'
+import os, shlex, sys, tomllib
+try:
+    c = tomllib.load(open(sys.argv[1], "rb"))
+except (OSError, tomllib.TOMLDecodeError) as e:
+    sys.exit(f"real-check: cannot parse the config: {e}")
+def die(key, why):
+    sys.exit(f"real-check: {key}: {why}")
+keys = [k for k in ("control_token", "control_token_env", "control_token_file") if c.get(k) is not None]
+if len(keys) > 1:
+    die("control_token", f"exactly one of control_token, control_token_env, control_token_file ({len(keys)} set)")
+token, source = "", "none"
+if keys == ["control_token"]:
+    token, source = str(c["control_token"]), "literal"
+elif keys == ["control_token_env"]:
+    token, source = os.environ.get(str(c["control_token_env"]), ""), "env"
+    if not token:
+        die("control_token_env", f"{c['control_token_env']} is unset or empty in this environment")
+elif keys == ["control_token_file"]:
+    try:
+        token = open(os.path.expanduser(str(c["control_token_file"]))).read().rstrip("\r\n")
+    except OSError as e:
+        die("control_token_file", f"cannot read the file: {e.strerror}")
+    source = "file"
+    if not token:
+        die("control_token_file", "the file is empty")
+print(f"export RC_CONTROL_TOKEN={shlex.quote(token)}")
+print(f"export RC_TOKEN_SOURCE={shlex.quote(source)}")
+print(f"export RC_INFER_BEARER={shlex.quote(c.get('infer_bearer') or '')}")
+PY
+) || exit 2
+eval "$secrets"
+if [[ $PRINT_SRC == 1 ]]; then echo "real-check: token source: $RC_TOKEN_SOURCE"; exit 0; fi
+
 [[ -n $LABEL && -n $A && -n $B ]] || { echo "real-check: --label, --a and --b are required" >&2; exit 2; }
 [[ $LABEL =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "real-check: --label must match [a-z0-9_-] (it becomes a directory name)" >&2; exit 2; }
 [[ $A =~ ^[A-Za-z0-9_.-]+$ && $B =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "real-check: profile names must match [A-Za-z0-9_.-]" >&2; exit 2; }
-[[ -r $CONFIG ]] || { echo "real-check: cannot read $CONFIG" >&2; exit 2; }
 [[ $YES == 1 ]] || { echo "real-check: this loads and evicts models on the GPU; pass --yes once the operator has said go" >&2; exit 2; }
 OUT="tests/fixtures/captures/$LABEL"
 mkdir -p "$OUT"
 WORK="$(mktemp -d)"
-
-# Secrets are read from the live config into this process only; never printed or written.
-eval "$(python3 - "$CONFIG" <<'PY'
-import shlex, sys, tomllib
-c = tomllib.load(open(sys.argv[1], "rb"))
-print(f"export RC_CONTROL_TOKEN={shlex.quote(c.get('control_token') or '')}")
-print(f"export RC_INFER_BEARER={shlex.quote(c.get('infer_bearer') or '')}")
-PY
-)"
 
 auth_router=(); [[ -n $RC_INFER_BEARER ]] && auth_router=(-H "Authorization: Bearer $RC_INFER_BEARER")
 auth_control=(); [[ -n $RC_CONTROL_TOKEN ]] && auth_control=(-H "Authorization: Bearer $RC_CONTROL_TOKEN")
@@ -73,16 +106,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if curl -fsS -o /dev/null --max-time 2 "$CONTROL/healthz"; then
+if curl -fsS -o /dev/null --max-time 2 "${auth_control[@]}" "$CONTROL/healthz"; then
   echo "real-check: using the running Saltnitor at $CONTROL"
 else
   script -qfec "$ROOT/target/release/saltnitor" /dev/null </dev/null >/dev/null 2>&1 &
   STARTED_PID=$!
   for _ in $(seq 1 100); do
-    curl -fsS -o /dev/null --max-time 1 "$CONTROL/healthz" && break
+    curl -fsS -o /dev/null --max-time 1 "${auth_control[@]}" "$CONTROL/healthz" && break
     sleep 0.2
   done
-  curl -fsS -o /dev/null --max-time 2 "$CONTROL/healthz" \
+  curl -fsS -o /dev/null --max-time 2 "${auth_control[@]}" "$CONTROL/healthz" \
     || { echo "real-check: Saltnitor control API did not come up at $CONTROL" >&2; exit 4; }
 fi
 

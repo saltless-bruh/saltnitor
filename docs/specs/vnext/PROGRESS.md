@@ -36,3 +36,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-10-09 · T1.14 · 297086d · DONE · BD-15, BD-16 fixed; 0 unwrap/expect on fallible paths; unwrap_used deny active without exceptions
 2026-10-09 · T1.15 · 6455835 · DONE · interrogator via :8765 with client key; timings_per_token; history under XDG_STATE_HOME (BD-18, BD-21)
 2026-10-09 · T1.16 · 1601656 · DONE · claims ledger (40 rows, 23 README bullets all covered); README/CHANGELOG/SECURITY rewritten; tuner title router.ini (BD-30); DEFECTS Fixed-by for 20 defects; invariants baseline README:32 entry removed
+2026-10-09 · G1 · 496e5fa · BLOCKED · evidence drafted; pending operator: CR-9, CR-10, R1 go, D1–D3, verdict

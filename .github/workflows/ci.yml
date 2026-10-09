@@ -82,3 +82,4 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/check-invariants.sh          # Verifies: REQ-CI-008/AC1, REQ-CI-008/AC3
       - run: scripts/test-check-invariants.sh     # Verifies: REQ-CI-008/AC2
+      - run: scripts/test-real-check-token.sh     # real-check.sh token resolution; no spec AC
