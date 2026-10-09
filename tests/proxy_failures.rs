@@ -76,48 +76,6 @@ async fn upstream_errors_pass_through_byte_exact() {
     }
 }
 
-/// Verifies: REQ-PRX-008/AC2
-#[tokio::test]
-async fn reset_or_garbage_before_headers_is_502() {
-    // A runtime that goes away: the next request finds nothing listening.
-    let fake = fake_llama_server::spawn(scenario(raw(&["x"], 0))).await;
-    let port = fake.addr.port();
-    drop(fake);
-    let (tx, _rx) = tokio::sync::mpsc::channel(8);
-    let api = Arc::new(
-        ControlApi::new(
-            HashMap::from([("A".to_string(), profile())]),
-            format!("http://127.0.0.1:{port}"),
-            None,
-            None,
-            0.0,
-            0.0,
-            tx,
-        )
-        .limits(short()),
-    );
-    let p = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], p));
-    tokio::spawn(serve(api, addr));
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let resp = reqwest::Client::new()
-        .post(format!("http://{addr}/v1/chat/completions"))
-        .body(r#"{"model":"A"}"#)
-        .send()
-        .await
-        .unwrap();
-    let v: serde_json::Value = resp.json().await.unwrap();
-    assert!(
-        ["RUNTIME_UNHEALTHY", "RUNTIME_START_FAILED"]
-            .contains(&v["error"]["code"].as_str().unwrap()),
-        "{v}"
-    );
-}
-
 /// Verifies: REQ-PRX-008/AC2 — the connection dies before any response header was written.
 /// The fake cannot do this (its faults always write headers), so the runtime here is a bare
 /// listener: it reports model A as loaded, then closes the socket on the chat request.
