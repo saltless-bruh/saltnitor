@@ -107,10 +107,24 @@ pub fn identity(pid: u32) -> Option<Identity> {
     })
 }
 
+/// `Tgid:` from `/proc/<pid>/status`: the thread-group leader (the process) `pid` belongs to.
+/// `Tgid != pid` means `pid` is a thread (TID), never a process.
+pub fn tgid(pid: u32) -> Option<u32> {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()?
+        .lines()
+        .find_map(|l| l.strip_prefix("Tgid:"))?
+        .trim()
+        .parse()
+        .ok()
+}
+
 /// Build the raw table from sysinfo (name, memory, command) plus `/proc` identity.
 pub fn snapshot_from_sysinfo(sys: &sysinfo::System) -> Vec<ProcessInfo> {
     sys.processes()
         .values()
+        // sysinfo lists every thread as its own entry; a TID is not a process (REQ-PROC-002/AC1).
+        .filter(|p| p.thread_kind().is_none())
         .filter_map(|p| {
             let pid = p.pid().as_u32();
             let id = identity(pid)?;
@@ -134,6 +148,34 @@ pub fn snapshot_from_sysinfo(sys: &sysinfo::System) -> Vec<ProcessInfo> {
         .collect()
 }
 
+/// Map a `pidfd_open(2)` failure (RF-4): only `ENOSYS` (kernel without pidfd) falls back to
+/// `kill(2)`; `ESRCH` means the process is gone (`Changed`); anything else (`EMFILE`, `EPERM`, …)
+/// is surfaced rather than silently reopening the PID-recycle window.
+pub fn classify_pidfd_errno(e: rustix::io::Errno) -> Result<Option<OwnedFd>, ProcessError> {
+    use rustix::io::Errno;
+    match e {
+        Errno::NOSYS => Ok(None),
+        Errno::SRCH => Err(ProcessError::Changed(
+            "the process no longer exists (pidfd_open: ESRCH)".into(),
+        )),
+        other => Err(ProcessError::Signal(format!(
+            "pidfd_open failed: {}",
+            std::io::Error::from(other)
+        ))),
+    }
+}
+
+/// Open a pidfd for `pid`; `Ok(None)` only where the kernel has no pidfd support.
+pub fn open_pidfd(pid: u32) -> Result<Option<OwnedFd>, ProcessError> {
+    let Some(p) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+        return Err(ProcessError::Changed(format!("{pid} is not a valid PID")));
+    };
+    match rustix::process::pidfd_open(p, PidfdFlags::empty()) {
+        Ok(fd) => Ok(Some(fd)),
+        Err(e) => classify_pidfd_errno(e),
+    }
+}
+
 /// What the operator selected: PID + identity snapshot + a pidfd when the kernel gives one.
 #[derive(Debug)]
 pub struct Target {
@@ -141,12 +183,16 @@ pub struct Target {
     pub name: String,
     pub identity: Identity,
     pidfd: Option<OwnedFd>,
+    /// A `pidfd_open` failure other than ENOSYS, reported by [`check`] before anything is signalled.
+    open_error: Option<ProcessError>,
 }
 
 impl Target {
     pub fn select(info: &ProcessInfo) -> Self {
-        let pidfd = Pid::from_raw(i32::try_from(info.pid).unwrap_or(0))
-            .and_then(|p| rustix::process::pidfd_open(p, PidfdFlags::empty()).ok());
+        let (pidfd, open_error) = match open_pidfd(info.pid) {
+            Ok(fd) => (fd, None),
+            Err(e) => (None, Some(e)),
+        };
         Self {
             pid: info.pid,
             name: info.name.clone(),
@@ -155,6 +201,7 @@ impl Target {
                 uid: info.uid,
             },
             pidfd,
+            open_error,
         }
     }
     /// The `kill(2)` fallback path (kernels without pidfd), also used by tests.
@@ -167,6 +214,7 @@ impl Target {
                 uid: info.uid,
             },
             pidfd: None,
+            open_error: None,
         }
     }
     /// Snapshot `pid` now: identity from `/proc` plus a pidfd (REQ-PROC-004). `Changed` when the
@@ -174,6 +222,11 @@ impl Target {
     pub fn snapshot(pid: u32) -> Result<Self, ProcessError> {
         let identity = identity(pid)
             .ok_or_else(|| ProcessError::Changed(format!("PID {pid} does not exist")))?;
+        if let Some(leader) = tgid(pid).filter(|l| *l != pid) {
+            return Err(ProcessError::Protected(format!(
+                "PID {pid} is a thread of PID {leader}; only whole processes can be signalled"
+            )));
+        }
         let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
             .map(|c| c.trim().to_string())
             .unwrap_or_default();
@@ -257,19 +310,30 @@ pub enum Outcome {
 
 /// Structural protection, then identity, then ownership. Nothing is signalled on `Err`.
 pub fn check(t: &Target, g: &Guard) -> Result<(), ProcessError> {
-    if t.pid == 1 {
+    // A TID signals its whole thread group, so judge the leader the TID belongs to (REQ-PROC-005).
+    let leader = tgid(t.pid).unwrap_or(t.pid);
+    if leader == 1 {
         return Err(ProcessError::Protected("PID 1 is never a target".into()));
     }
-    if t.pid == g.self_pid {
+    if leader == g.self_pid {
         return Err(ProcessError::Protected(
             "saltnitor will not signal itself".into(),
         ));
     }
-    if g.runtime_pids.contains(&t.pid) {
+    if g.runtime_pids.contains(&leader) {
         return Err(ProcessError::Protected(format!(
             "PID {} belongs to the runtime's process tree; stop the runtime through its lifecycle (Ctrl+K)",
             t.pid
         )));
+    }
+    if leader != t.pid {
+        return Err(ProcessError::Protected(format!(
+            "PID {} is a thread of PID {leader}; only whole processes can be signalled",
+            t.pid
+        )));
+    }
+    if let Some(e) = &t.open_error {
+        return Err(e.clone());
     }
     match identity(t.pid) {
         Some(now) if now == t.identity => {}

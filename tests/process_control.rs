@@ -3,10 +3,12 @@
 use proptest::prelude::*;
 use saltnitor::error::ErrorCode;
 use saltnitor::process::{
-    Guard, Outcome, ProcessError, ProcessInfo, Target, check, identity, kill, kill_guarded,
-    parse_compute_apps, table, terminate, terminate_guarded,
+    Guard, Outcome, ProcessError, ProcessInfo, Target, check, classify_pidfd_errno, identity, kill,
+    kill_guarded, open_pidfd, parse_compute_apps, snapshot_from_sysinfo, table, terminate,
+    terminate_guarded,
 };
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::time::Duration;
 
 fn sleeper() -> Child {
@@ -241,4 +243,167 @@ proptest! {
         prop_assert_eq!(got.clone(), pids);
         prop_assert_eq!(got.len(), out.len(), "no duplicate PIDs");
     }
+}
+
+/// Keeps `n` extra threads alive in this (multi-threaded) test process and returns exactly their
+/// TIDs (each thread reads its own id from `/proc/thread-self`); dropping the sender releases them.
+fn spawn_threads(n: usize) -> (Vec<u32>, mpsc::Sender<()>) {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let stop_rx = std::sync::Arc::new(std::sync::Mutex::new(stop_rx));
+    let (id_tx, id_rx) = mpsc::channel::<u32>();
+    for _ in 0..n {
+        let (rx, id_tx) = (stop_rx.clone(), id_tx.clone());
+        std::thread::spawn(move || {
+            let link = std::fs::read_link("/proc/thread-self").unwrap();
+            let tid = link.file_name().unwrap().to_string_lossy().parse().unwrap();
+            id_tx.send(tid).unwrap();
+            let _ = rx.lock().unwrap().recv();
+        });
+    }
+    let tids = (0..n).map(|_| id_rx.recv().unwrap()).collect();
+    (tids, stop_tx)
+}
+
+fn info_for(pid: u32) -> ProcessInfo {
+    let id = identity(pid).expect("pid is alive");
+    ProcessInfo {
+        pid,
+        name: "thread".into(),
+        memory_bytes: 0,
+        gpu_memory_bytes: None,
+        gpu_memory_reason: None,
+        command: None,
+        start_time_ticks: id.start_time_ticks,
+        uid: id.uid,
+    }
+}
+
+/// Verifies: REQ-PROC-002/AC1 — sysinfo lists every thread as its own entry; the table must not.
+#[test]
+fn process_table_has_one_row_per_pid_and_no_thread_rows() {
+    let (tids, stop) = spawn_threads(3);
+    assert!(!tids.is_empty(), "the test process has extra threads");
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        sysinfo::ProcessRefreshKind::everything(),
+    );
+    let rows = snapshot_from_sysinfo(&sys);
+    let pids: Vec<u32> = rows.iter().map(|r| r.pid).collect();
+    for tid in &tids {
+        assert!(
+            !pids.contains(tid),
+            "thread {tid} must not be a process row"
+        );
+    }
+    assert!(
+        pids.contains(&std::process::id()),
+        "the process itself is listed"
+    );
+    let mut dedup = pids.clone();
+    dedup.sort_unstable();
+    dedup.dedup();
+    assert_eq!(dedup.len(), pids.len(), "exactly one row per PID");
+    let _ = stop.send(());
+}
+
+/// Verifies: REQ-PROC-005/AC1 — a thread of saltnitor itself is not a target (no self-guard bypass)
+#[test]
+fn a_thread_of_saltnitor_is_refused_not_signalled() {
+    let (tids, stop) = spawn_threads(1);
+    let tid = tids[0];
+    let e = Target::snapshot(tid).unwrap_err();
+    assert!(matches!(e, ProcessError::Protected(_)), "{e:?}");
+    assert_eq!(e.code(), ErrorCode::ProcessProtected);
+
+    let t = Target::without_pidfd(&info_for(tid));
+    let e = terminate_guarded(&t, &own_guard(), Duration::from_millis(10)).unwrap_err();
+    assert_eq!(e.code(), ErrorCode::ProcessProtected, "{e:?}");
+    assert!(matches!(
+        kill_guarded(&t, &own_guard()),
+        Err(ProcessError::Protected(_))
+    ));
+    let _ = stop.send(());
+}
+
+/// Verifies: REQ-PROC-005/AC1 — a thread of a runtime-tree process is protected as the runtime
+#[test]
+fn a_thread_of_a_runtime_process_is_protected_as_the_runtime() {
+    let (tids, stop) = spawn_threads(1);
+    let g = Guard {
+        own_uids: own_guard().own_uids,
+        self_pid: 1, // pretend we are not this process: only the runtime list names it
+        runtime_pids: vec![std::process::id()],
+    };
+    let t = Target::without_pidfd(&info_for(tids[0]));
+    let e = check(&t, &g).unwrap_err();
+    assert!(
+        matches!(&e, ProcessError::Protected(r) if r.contains("runtime")),
+        "{e:?}"
+    );
+    let _ = stop.send(());
+}
+
+/// Verifies: REQ-PROC-004/AC1 — UID drift (not only start time) is `PROCESS_CHANGED`
+#[test]
+fn changed_uid_is_refused_and_nothing_is_signalled() {
+    let mut c = sleeper();
+    let mut stale = info(&c);
+    stale.uid += 1;
+    let e = terminate_guarded(
+        &Target::without_pidfd(&stale),
+        &own_guard(),
+        Duration::from_millis(100),
+    )
+    .unwrap_err();
+    assert!(matches!(e, ProcessError::Changed(_)), "{e:?}");
+    assert!(alive(c.id()));
+    c.kill().unwrap();
+    let _ = c.wait();
+}
+
+/// Verifies: REQ-PROC-004/AC2 — only ENOSYS falls back to kill(2); ESRCH is `Changed`, the rest surface
+#[test]
+fn pidfd_open_errors_are_classified_not_swallowed() {
+    use rustix::io::Errno;
+    assert!(matches!(
+        classify_pidfd_errno(Errno::SRCH),
+        Err(ProcessError::Changed(_))
+    ));
+    assert!(matches!(classify_pidfd_errno(Errno::NOSYS), Ok(None)));
+    assert!(matches!(
+        classify_pidfd_errno(Errno::MFILE),
+        Err(ProcessError::Signal(_))
+    ));
+    assert!(matches!(
+        classify_pidfd_errno(Errno::PERM),
+        Err(ProcessError::Signal(_))
+    ));
+
+    let mut c = sleeper();
+    let pid = c.id();
+    assert!(
+        open_pidfd(pid).unwrap().is_some(),
+        "a live PID gets a pidfd"
+    );
+    c.kill().unwrap();
+    let _ = c.wait();
+    assert!(
+        matches!(open_pidfd(pid), Err(ProcessError::Changed(_))),
+        "a reaped PID is Changed"
+    );
+}
+
+/// Verifies: REQ-PROC-004/AC1 — a selection whose pidfd could not be opened (PID gone) is refused as changed
+#[test]
+fn selecting_a_pid_that_vanished_is_refused_as_changed() {
+    let mut c = sleeper();
+    let stale = info(&c);
+    c.kill().unwrap();
+    let _ = c.wait();
+    let t = Target::select(&stale);
+    assert!(!t.has_pidfd());
+    let e = terminate_guarded(&t, &own_guard(), Duration::from_millis(10)).unwrap_err();
+    assert!(matches!(e, ProcessError::Changed(_)), "{e:?}");
 }

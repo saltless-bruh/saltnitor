@@ -77,7 +77,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(2), Constraint::Length(3)])
             .split(left_inner);
-        let temp_color = if app.gpu_temp > 80 {
+        // Unmeasured GPU values are `n/a`, never 0 (INV-18, REQ-TUI-006/AC1).
+        let measured = app.gpu_measured;
+        let na = || "n/a".to_string();
+        let temp_color = if !measured {
+            Color::DarkGray
+        } else if app.gpu_temp > 80 {
             Color::Red
         } else if app.gpu_temp > 70 {
             Color::Yellow
@@ -89,23 +94,45 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::raw(" Core Temp:  "),
                 Span::styled(
-                    format!("{:<15}°C", app.gpu_temp),
+                    if measured {
+                        format!("{:<15}°C", app.gpu_temp)
+                    } else {
+                        format!("{:<17}", na())
+                    },
                     Style::default().fg(temp_color).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" Fan Speed:  "),
                 Span::styled(
-                    format!("{}%", app.gpu_fan),
+                    if measured {
+                        format!("{}%", app.gpu_fan)
+                    } else {
+                        na()
+                    },
                     Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(vec![
                 Span::raw(" Power Draw: "),
                 Span::styled(
-                    format!("{:<15}", app.gpu_power),
+                    format!(
+                        "{:<15}",
+                        if measured {
+                            app.gpu_power.clone()
+                        } else {
+                            na()
+                        }
+                    ),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::raw(" Clocks:     "),
-                Span::styled(&app.gpu_clocks, Style::default().fg(Color::Magenta)),
+                Span::styled(
+                    if measured {
+                        app.gpu_clocks.clone()
+                    } else {
+                        na()
+                    },
+                    Style::default().fg(Color::Magenta),
+                ),
             ]),
         ];
         f.render_widget(Paragraph::new(stats_text), l_chunks[0]);
@@ -115,9 +142,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .constraints([Constraint::Length(1), Constraint::Length(1)])
             .split(l_chunks[1]);
 
-        let gpu_u_val = app.gpu_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0;
+        let gpu_u_val = if measured {
+            app.gpu_util.trim().parse::<f64>().unwrap_or(0.0) / 100.0
+        } else {
+            0.0
+        };
         // --- Use actual VRAM Capacity math, not Bandwidth utilization ---
-        let vram_ratio = if app.vram_total > 0.0 {
+        let vram_ratio = if app.vram_total > 0.0 && measured {
             (app.vram_used / app.vram_total).clamp(0.0, 1.0)
         } else {
             0.0
@@ -133,7 +164,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let g_gauge = Gauge::default()
             .gauge_style(Style::default().fg(Color::Cyan))
             .ratio(gpu_u_val.clamp(0.0, 1.0))
-            .label(format!("{}%", app.gpu_util.trim()));
+            .label(if measured {
+                format!("{}%", app.gpu_util.trim())
+            } else {
+                na()
+            });
         f.render_widget(g_gauge, g_row[1]);
 
         let v_row = Layout::default()
@@ -144,7 +179,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let v_gauge = Gauge::default()
             .gauge_style(Style::default().fg(Color::LightBlue))
             .ratio(vram_ratio)
-            .label(format!("{}%", vram_percent));
+            .label(if measured {
+                format!("{}%", vram_percent)
+            } else {
+                na()
+            });
         f.render_widget(v_gauge, v_row[1]);
 
         // --- GPU List Rendering ---
@@ -348,7 +387,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .constraints([Constraint::Length(3), Constraint::Length(3)])
             .split(top_chunks[0]);
 
-        let vram_ratio = if app.vram_total > 0.0 {
+        let vram_ratio = if app.vram_total > 0.0 && app.gpu_measured {
             (app.vram_used / app.vram_total).clamp(0.0, 1.0)
         } else {
             0.0
@@ -365,9 +404,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         } else {
             " [!] NO GPU DETECTED ".to_string()
         };
-        let vram_title_right =
-            Line::from(format!(" {:.2} / {:.1} GB ", app.vram_used, app.vram_total))
-                .alignment(ratatui::layout::Alignment::Right);
+        let vram_title_right = Line::from(if app.has_nvidia && app.gpu_measured {
+            format!(" {:.2} / {:.1} GB ", app.vram_used, app.vram_total)
+        } else {
+            " n/a ".to_string()
+        })
+        .alignment(ratatui::layout::Alignment::Right);
         let vram_gauge = Gauge::default()
             .block(
                 Block::default()
@@ -1126,6 +1168,7 @@ mod tests {
         app.ram_used = 12.25;
         app.cpu_history = (0..100).map(|i| (i * 7 % 100) as u64).collect();
         app.cpu_cores = (0..16).map(|i| (i * 6) as f32).collect();
+        app.gpu_measured = true;
         app.gpu_temp = 55;
         app.gpu_power = "120W".into();
         app.gpu_util = "40%".into();
@@ -1166,6 +1209,19 @@ mod tests {
             app.add_log(line.to_string());
         }
         app
+    }
+
+    /// Verifies: REQ-TUI-006/AC1, INV-18 — unmeasured GPU telemetry renders `n/a`, not zeros
+    #[test]
+    fn unmeasured_gpu_telemetry_renders_na_not_zero() {
+        let mut app = fixture();
+        app.gpu_measured = false;
+        app.vram_used = 0.0;
+        app.gpu_temp = 0;
+        let screen = render(&mut app, 120, 40);
+        assert!(screen.contains("n/a"), "GPU values must read n/a");
+        assert!(!screen.contains("0.00 /"), "no fabricated 0.00 GB VRAM");
+        assert!(!screen.contains("0°C"), "no fabricated 0 C");
     }
 
     fn render(app: &mut App, w: u16, h: u16) -> String {

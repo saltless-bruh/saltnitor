@@ -109,13 +109,70 @@ pub fn history_path(env: &dyn Fn(&str) -> Option<String>) -> PathBuf {
     }
 }
 
+/// Write the console history, creating its directory. `Err` is the operator-facing reason
+/// (REQ-ERR-005/AC1): a history that cannot be saved must not vanish silently.
+pub fn save_history(path: &std::path::Path, content: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create history directory {}: {e}", dir.display()))?;
+    }
+    std::fs::write(path, content)
+        .map_err(|e| format!("cannot write history {}: {e}", path.display()))
+}
+
+/// The strike failed before or instead of a normal answer: tell the operator why (an
+/// `Event::Error` for the status line and log) and close the deck with `status` (INV-18).
+async fn fail(tx: &Sender<Event>, message: String, status: &str) {
+    let _ = tx
+        .send(Event::Error {
+            source: "interrogator".into(),
+            message,
+        })
+        .await;
+    let _ = tx
+        .send(Event::ApiStreamEnd {
+            metrics: Metrics::default(),
+            status: status.to_string(),
+        })
+        .await;
+}
+
+/// `error.code: error.message` from an error envelope, else the first part of the raw body.
+fn describe_error_body(status: reqwest::StatusCode, body: &[u8]) -> String {
+    let envelope = serde_json::from_slice::<serde_json::Value>(body).ok();
+    let field = |k: &str| {
+        envelope
+            .as_ref()
+            .and_then(|v| v["error"][k].as_str())
+            .map(str::to_string)
+    };
+    match (field("code"), field("message")) {
+        (Some(code), Some(message)) => format!("{status}: {code}: {message}"),
+        (None, Some(message)) => format!("{status}: {message}"),
+        _ => {
+            let text = String::from_utf8_lossy(body);
+            let text = text.trim();
+            if text.is_empty() {
+                format!("{status} with an empty body")
+            } else {
+                format!("{status}: {}", text.chars().take(200).collect::<String>())
+            }
+        }
+    }
+}
+
 /// Fire one streamed request at Saltnitor's own endpoint with the client key (REQ-TUI-007/AC1),
 /// forwarding tokens as events. TTFT is measured client-side at the first body chunk.
 pub async fn strike(control_port: u16, bearer: Option<String>, payload: String, tx: Sender<Event>) {
     let start = Instant::now();
     let url = format!("http://127.0.0.1:{control_port}/v1/chat/completions");
-    let mut body: serde_json::Value =
-        serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
+    let mut body: serde_json::Value = match serde_json::from_str(&payload) {
+        Ok(v) => v,
+        Err(e) => {
+            fail(&tx, format!("payload is not valid JSON: {e}"), "n/a").await;
+            return;
+        }
+    };
     if let Some(obj) = body.as_object_mut() {
         obj.insert("stream".to_string(), serde_json::json!(true));
         obj.insert("timings_per_token".to_string(), serde_json::json!(true));
@@ -129,21 +186,35 @@ pub async fn strike(control_port: u16, bearer: Option<String>, payload: String, 
     let mut res = match req.body(body.to_string()).send().await {
         Ok(r) => r,
         Err(e) => {
-            let _ = tx.send(Event::ApiStreamChunk(format!("ERROR: {e}"))).await;
-            let _ = tx
-                .send(Event::ApiStreamEnd {
-                    metrics: Metrics::default(),
-                    status: "500".to_string(),
-                })
-                .await;
+            fail(
+                &tx,
+                format!("cannot reach saltnitor on port {control_port}: {e}"),
+                "n/a",
+            )
+            .await;
             return;
         }
     };
-    let status = res.status().to_string();
+    let http_status = res.status();
+    let status = http_status.to_string();
+    if !http_status.is_success() {
+        let body = res.bytes().await.unwrap_or_default();
+        fail(&tx, describe_error_body(http_status, &body), &status).await;
+        return;
+    }
     let (mut ttft, mut first_at) = (None, None);
     let mut transcript = String::new();
     let mut buffer = String::new();
-    while let Ok(Some(chunk)) = res.chunk().await {
+    let mut aborted = None;
+    loop {
+        let chunk = match res.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(e) => {
+                aborted = Some(e);
+                break;
+            }
+        };
         if first_at.is_none() {
             let t = start.elapsed().as_millis();
             ttft = Some(t);
@@ -169,6 +240,17 @@ pub async fn strike(control_port: u16, bearer: Option<String>, payload: String, 
     }
     let elapsed = first_at.map(|t| t.elapsed().as_millis());
     let metrics = metrics_from_transcript(&transcript, ttft, elapsed);
+    let status = if let Some(e) = aborted {
+        let _ = tx
+            .send(Event::Error {
+                source: "interrogator".into(),
+                message: format!("stream aborted before the end: {e}"),
+            })
+            .await;
+        format!("{status} aborted")
+    } else {
+        status
+    };
     let _ = tx.send(Event::ApiStreamEnd { metrics, status }).await;
 }
 

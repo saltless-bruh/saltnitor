@@ -1,4 +1,4 @@
-use app::App;
+use app::{App, ProcPane};
 use clap::Parser;
 use crossterm::{
     ExecutableCommand,
@@ -8,7 +8,8 @@ use crossterm::{
 use events::Event;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use saltnitor::{
-    app, auth, config_v1, control_api, events, interrogate, process, proxy_stream, ui,
+    app, auth, config_v1, control_api, events, gpu, hotswap, interrogate, process, proxy_stream,
+    systemctl, ui,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -231,26 +232,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cpu_core_count = sys.cpus().len();
     let ram_total = sys.total_memory() as f64 / 1_073_741_824.0;
 
-    // Probing for NVIDIA GPU
+    // Probing for NVIDIA GPU. `has_nvidia` only when the card's name and total VRAM were
+    // actually read; otherwise the reason is logged and the GPU panes say n/a (INV-18).
     let mut gpu_name = "NO NVIDIA GPU DETECTED".to_string();
-    let mut vram_total = 1.0; // Fallback to prevent divide-by-zero
+    let mut vram_total = 0.0; // unknown; never shown while has_nvidia is false
     let mut has_nvidia = false;
+    let mut gpu_probe_note = None;
 
-    if let Ok(output) = std::process::Command::new("nvidia-smi")
+    match std::process::Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,memory.total",
             "--format=csv,noheader,nounits",
         ])
         .output()
-        && output.status.success()
     {
-        let out = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = out.trim().split(", ").collect();
-        if parts.len() == 2 {
-            gpu_name = parts[0].to_string();
-            vram_total = parts[1].parse::<f64>().unwrap_or(1.0) / 1024.0;
-            has_nvidia = true;
+        Ok(output) if output.status.success() => {
+            match gpu::parse_device(&String::from_utf8_lossy(&output.stdout)) {
+                Ok((name, total_gb)) => {
+                    gpu_name = name;
+                    vram_total = total_gb;
+                    has_nvidia = true;
+                }
+                Err(reason) => gpu_probe_note = Some(format!("GPU probe: {reason}")),
+            }
         }
+        Ok(output) => {
+            gpu_probe_note = Some(format!(
+                "GPU probe: nvidia-smi exited with {}",
+                output.status
+            ));
+        }
+        // Not installed: a CPU-only host is legitimate, the header already says so.
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => gpu_probe_note = Some(format!("GPU probe: cannot run nvidia-smi: {e}")),
     }
 
     // 3. Terminal Initialization
@@ -278,6 +292,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     app.term_grace_ms = toml_conf.process.term_grace_ms;
     app.control_port = toml_conf.control_port.unwrap_or(8765);
     app.client_bearer = config_v1::client_bearer(toml_conf.client_key_env.as_deref());
+    app.infer_bearer = toml_conf.infer_bearer.clone();
     app.redactor = auth::Redactor::new(
         [
             control_token.clone(),
@@ -290,6 +305,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for n in &config_notes {
         app.add_log(format!(">>> CONFIG: {n}"));
+    }
+    if let Some(note) = &gpu_probe_note {
+        app.add_log(format!(">>> {note}"));
+        app.last_error = Some(format!("gpu: {note}"));
     }
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
@@ -377,10 +396,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             RefreshKind::nothing()
                 .with_cpu(CpuRefreshKind::everything())
                 .with_memory(MemoryRefreshKind::everything())
-                .with_processes(ProcessRefreshKind::everything()),
+                .with_processes(ProcessRefreshKind::everything().without_tasks()),
         );
 
         let mut poll_count: u32 = 0;
+        let mut gpu_failing = false;
         loop {
             tokio::time::sleep(Duration::from_millis(1000)).await;
             sys.refresh_cpu_specifics(CpuRefreshKind::everything());
@@ -388,7 +408,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sys.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
-                ProcessRefreshKind::everything(),
+                ProcessRefreshKind::everything().without_tasks(),
             );
 
             // System Metrics
@@ -402,47 +422,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // One row per PID (BD-05): names are never a key.
             let raw = process::snapshot_from_sysinfo(&sys);
-            // NVIDIA Metrics (General)
-            let mut vram_used = 0.0;
-            let mut gpu_temp = 0;
-            let mut gpu_power = String::from("N/A");
-            let mut gpu_util = String::from("0");
-            let mut vram_util = String::from("0");
-            let mut gpu_fan = String::from("N/A");
-            let mut gpu_clocks = String::from("N/A");
-
+            // NVIDIA metrics: a failed query is `None` plus ONE error event on the transition to
+            // failing (not every second), never zeros (INV-18, REQ-ERR-005/AC1).
+            let mut gpu = None;
+            let mut gpu_apps = Vec::new();
+            let mut gpu_problem: Option<String> = None;
             if has_nvidia {
                 // Expanded query to grab 9 specific data points at once
-                if let Ok(output) = std::process::Command::new("nvidia-smi")
+                match std::process::Command::new("nvidia-smi")
                     .args(["--query-gpu=memory.used,temperature.gpu,power.draw,power.limit,utilization.gpu,utilization.memory,fan.speed,clocks.gr,clocks.mem", "--format=csv,noheader,nounits"])
                     .output()
                 {
-                    let out = String::from_utf8_lossy(&output.stdout);
-                    let parts: Vec<&str> = out.trim().split(", ").collect();
-                    if parts.len() >= 9 {
-                        vram_used = parts[0].parse::<f64>().unwrap_or(0.0) / 1024.0;
-                        gpu_temp = parts[1].parse::<i32>().unwrap_or(0);
-                        gpu_power = format!("{}W / {}W", parts[2], parts[3]);
-                        gpu_util = parts[4].to_string();
-                        vram_util = parts[5].to_string();
-                        gpu_fan = parts[6].to_string();
-                        gpu_clocks = format!("{} MHz / {} MHz", parts[7], parts[8]); // Core / Mem
-                    }
+                    Ok(o) if o.status.success() => match gpu::parse_sample(&String::from_utf8_lossy(&o.stdout)) {
+                        Ok(sample) => gpu = Some(sample),
+                        Err(reason) => gpu_problem = Some(reason),
+                    },
+                    Ok(o) => gpu_problem = Some(format!("nvidia-smi exited with {}", o.status)),
+                    Err(e) => gpu_problem = Some(format!("cannot run nvidia-smi: {e}")),
                 }
-            }
-
-            // NVIDIA Metrics (Processes): exact PIDs, merged into the table
-            let mut gpu_apps = Vec::new();
-            if has_nvidia
-                && let Ok(output) = std::process::Command::new("nvidia-smi")
+                // Processes: exact PIDs, merged into the table
+                match std::process::Command::new("nvidia-smi")
                     .args([
                         "--query-compute-apps=pid,process_name,used_memory",
                         "--format=csv,noheader,nounits",
                     ])
                     .output()
-            {
-                gpu_apps = process::parse_compute_apps(&String::from_utf8_lossy(&output.stdout));
+                {
+                    Ok(o) if o.status.success() => {
+                        gpu_apps = process::parse_compute_apps(&String::from_utf8_lossy(&o.stdout));
+                    }
+                    Ok(o) => {
+                        gpu_problem.get_or_insert(format!(
+                            "nvidia-smi (compute apps) exited with {}",
+                            o.status
+                        ));
+                    }
+                    Err(e) => {
+                        gpu_problem
+                            .get_or_insert(format!("cannot run nvidia-smi (compute apps): {e}"));
+                    }
+                }
             }
+            match (&gpu_problem, gpu_failing) {
+                (Some(reason), false) => {
+                    let _ = tx_hw
+                        .send(Event::Error {
+                            source: "gpu".into(),
+                            message: reason.clone(),
+                        })
+                        .await;
+                }
+                (None, true) => {
+                    let _ = tx_hw
+                        .send(Event::LogLine(">>> GPU: telemetry restored".to_string()))
+                        .await;
+                }
+                _ => {}
+            }
+            gpu_failing = gpu_problem.is_some();
             let processes = process::table(raw, &gpu_apps);
 
             // uid → user name, refreshed on the first poll and every 30th after it
@@ -458,20 +495,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _ = tx_hw
                 .send(Event::HardwareUpdate {
-                    vram_used,
                     ram_used,
                     cpu_load: cpu_load as u64,
-                    gpu_temp,
-                    gpu_power,
+                    gpu,
                     cpu_cores,
                     swap_used,
                     swap_total,
                     processes,
                     users,
-                    gpu_util,
-                    vram_util,
-                    gpu_fan,
-                    gpu_clocks,
                     sys_uptime,
                 })
                 .await;
@@ -605,20 +636,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // --- PROCESS SNIPER (GPU) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => app.show_gpu_inspector = false,
-                                KeyCode::Up => {
-                                    let i = match app.gpu_proc_state.selected() { Some(i) => if i == 0 { app.gpu_processes.len().saturating_sub(1) } else { i - 1 }, None => 0 };
-                                    app.gpu_proc_state.select(Some(i));
-                                }
-                                KeyCode::Down => {
-                                    let i = match app.gpu_proc_state.selected() { Some(i) => if i >= app.gpu_processes.len().saturating_sub(1) { 0 } else { i + 1 }, None => 0 };
-                                    app.gpu_proc_state.select(Some(i));
-                                }
+                                KeyCode::Up => app.move_proc_cursor(ProcPane::Gpu, false),
+                                KeyCode::Down => app.move_proc_cursor(ProcPane::Gpu, true),
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    let sel = app.gpu_proc_state.selected().and_then(|i| app.gpu_processes.get(i)).cloned();
+                                    // the PID the operator selected, found in the current rows (not a list index)
+                                    let sel = app.selected_proc(ProcPane::Gpu).cloned();
                                     if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
                                 }
                                 KeyCode::Char('X') => {
-                                    let sel = app.gpu_proc_state.selected().and_then(|i| app.gpu_processes.get(i)).cloned();
+                                    let sel = app.selected_proc(ProcPane::Gpu).cloned();
                                     if let Some(info) = sel { ask_kill(&mut app, &info); }
                                 }
                                 _ => {}
@@ -627,20 +653,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // --- PROCESS SNIPER (CPU/RAM) ---
                             match key.code {
                                 KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => app.show_sys_inspector = false,
-                                KeyCode::Up => {
-                                    let i = match app.sys_proc_state.selected() { Some(i) => if i == 0 { app.sys_processes.len().saturating_sub(1) } else { i - 1 }, None => 0 };
-                                    app.sys_proc_state.select(Some(i));
-                                }
-                                KeyCode::Down => {
-                                    let i = match app.sys_proc_state.selected() { Some(i) => if i >= app.sys_processes.len().saturating_sub(1) { 0 } else { i + 1 }, None => 0 };
-                                    app.sys_proc_state.select(Some(i));
-                                }
+                                KeyCode::Up => app.move_proc_cursor(ProcPane::Sys, false),
+                                KeyCode::Down => app.move_proc_cursor(ProcPane::Sys, true),
                                 KeyCode::Char('x') | KeyCode::Delete => {
-                                    let sel = app.sys_proc_state.selected().and_then(|i| app.sys_processes.get(i)).cloned();
+                                    // the PID the operator selected, found in the current rows (not a list index)
+                                    let sel = app.selected_proc(ProcPane::Sys).cloned();
                                     if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
                                 }
                                 KeyCode::Char('X') => {
-                                    let sel = app.sys_proc_state.selected().and_then(|i| app.sys_processes.get(i)).cloned();
+                                    let sel = app.selected_proc(ProcPane::Sys).cloned();
                                     if let Some(info) = sel { ask_kill(&mut app, &info); }
                                 }
                                 _ => {}
@@ -731,11 +752,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                     Some(updated) => {
                                                         if tokio::fs::write(router_ini_path, updated).await.is_ok() {
                                                             let _ = tx_t.send(Event::LogLine(format!(">>> TUNER: [{}] updated. Restarting router...", section))).await;
-                                                            let out = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc_name]).output().await;
-                                                            match out {
-                                                                Ok(o) if o.status.success() => { let _ = tx_t.send(Event::LogLine(">>> TUNER: router restarted. If it does not come back, a key may be unsupported - check: journalctl -u llama-router -e".to_string())).await; }
-                                                                _ => { let _ = tx_t.send(Event::LogLine(">>> TUNER ERROR: restart failed (sudoers for 'systemctl restart'? check journalctl).".to_string())).await; }
-                                                            }
+                                                            systemctl::run_and_report("sudo", "restart", &svc_name, &tx_t, &format!(">>> TUNER: router restarted. If it does not come back, a key may be unsupported - check: journalctl -u {svc_name}")).await;
                                                         } else {
                                                             let _ = tx_t.send(Event::LogLine(format!(">>> TUNER ERROR: cannot write {}", router_ini_path))).await;
                                                         }
@@ -793,26 +810,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 // The router (--models-preset --models-max 1) autoloads it and
                                                 // evicts the incumbent. No router.env, no systemctl, no sudo.
                                                 app.add_log(format!(">>> HOT-SWAP: Requesting [{}] from router...", chosen_model));
+                                                // The direct hop to the raw router uses the router's own key
+                                                // (`infer_bearer`), never the daemon client key, and only for a
+                                                // loopback router (INV-06, REQ-SEC-012/AC1).
                                                 let host_api = app.host.clone();
                                                 let port_api = app.port;
                                                 let warmup_model = chosen_model.clone();
-                                                let bearer = if app.api_key { app.client_bearer.clone() } else { None };
+                                                let bearer = hotswap::direct_router_bearer(&app.host, app.api_key, app.infer_bearer.as_deref());
                                                 let tx_warmup = tx.clone();
                                                 tokio::spawn(async move {
-                                                    let client = reqwest::Client::new();
-                                                    let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
-                                                    let payload = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "warmup"}}], "max_tokens": 1}}"#, warmup_model);
-                                                    let mut req = client.post(&url)
-                                                        .header("Content-Type", "application/json")
-                                                        .timeout(std::time::Duration::from_secs(120));
-                                                    if let Some(b) = bearer { req = req.header("Authorization", format!("Bearer {b}")); }
-                                                    match req.body(payload).send().await {
-                                                        Ok(res) if res.status().is_success() => {
+                                                    match hotswap::warm_load(&host_api, port_api, bearer, &warmup_model).await {
+                                                        Ok(()) => {
                                                             let _ = tx_warmup.send(Event::ActiveModelSet(warmup_model.clone())).await;
                                                             let _ = tx_warmup.send(Event::LogLine(format!(">>> HOT-SWAP: [{}] resident & warm.", warmup_model))).await;
                                                         }
-                                                        Ok(res) => { let _ = tx_warmup.send(Event::LogLine(format!(">>> HOT-SWAP ERROR: router returned {}", res.status()))).await; }
-                                                        Err(_) => { let _ = tx_warmup.send(Event::LogLine(">>> HOT-SWAP ERROR: router did not respond.".to_string())).await; }
+                                                        Err(reason) => { let _ = tx_warmup.send(Event::Error { source: "hot-swap".into(), message: reason }).await; }
                                                     }
                                                 });
                                             }
@@ -911,17 +923,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::Char('S') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Starting {}...", svc));
-                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "start", &svc]).output().await; });
+                                    let tx_s = tx.clone();
+                                    tokio::spawn(async move { systemctl::run_and_report("sudo", "start", &svc, &tx_s, &format!(">>> SYSTEMCTL: {svc} started.")).await; });
                                 }
                                 KeyCode::Char('X') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Stopping {}...", svc));
-                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await; });
+                                    let tx_s = tx.clone();
+                                    tokio::spawn(async move { systemctl::run_and_report("sudo", "stop", &svc, &tx_s, &format!(">>> SYSTEMCTL: {svc} stopped.")).await; });
                                 }
                                 KeyCode::Char('R') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Restarting {}...", svc));
-                                    tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "restart", &svc]).output().await; });
+                                    let tx_s = tx.clone();
+                                    tokio::spawn(async move { systemctl::run_and_report("sudo", "restart", &svc, &tx_s, &format!(">>> SYSTEMCTL: {svc} restarted.")).await; });
                                 }
                                 KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                     // Kill-switch must STOP the unit. With Restart=always a bare SIGKILL is
@@ -930,11 +945,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     app.add_log(">>> TACTICAL KILL-SWITCH: stopping unit (frees VRAM, stays down)...".to_string());
                                     let tx_k = tx.clone();
                                     tokio::spawn(async move {
-                                        let out = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await;
-                                        match out {
-                                            Ok(o) if o.status.success() => { let _ = tx_k.send(Event::LogLine(">>> KILL-SWITCH: unit stopped, VRAM freed. (Shift+S to restart.)".to_string())).await; }
-                                            _ => { let _ = tx_k.send(Event::LogLine(">>> KILL-SWITCH ERROR: stop failed - sudoers must allow 'systemctl stop'; see journalctl.".to_string())).await; }
-                                        }
+                                        systemctl::run_and_report("sudo", "stop", &svc, &tx_k, ">>> KILL-SWITCH: unit stopped, VRAM freed. (Shift+S to restart.)").await;
                                     });
                                 }
                                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1009,19 +1020,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Event::PortAudit(status) => {
                         app.port_status = status;
                     }
-                    Event::HardwareUpdate { vram_used, ram_used, cpu_load, gpu_temp, gpu_power, cpu_cores, swap_used, swap_total, processes, users, gpu_util, vram_util, gpu_fan, gpu_clocks, sys_uptime } => {
-                        app.vram_used = vram_used;
+                    Event::HardwareUpdate { ram_used, cpu_load, gpu, cpu_cores, swap_used, swap_total, processes, users, sys_uptime } => {
                         app.ram_used = ram_used;
-                        app.gpu_temp = gpu_temp;
-                        app.gpu_power = gpu_power;
                         app.cpu_cores = cpu_cores;
                         app.swap_used = swap_used;
                         app.swap_total = swap_total;
-                        app.gpu_util = gpu_util;
-                        app.vram_util = vram_util;
-                        app.gpu_fan = gpu_fan;
-                        app.gpu_clocks = gpu_clocks;
                         app.sys_uptime = sys_uptime;
+                        app.apply_gpu_sample(gpu);
 
                         app.set_processes(&processes, users);
 
@@ -1036,6 +1041,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.add_log(format!(">>> EXTERNAL: resident model is now {}", m));
                     }
                     Event::Error { source, message } => {
+                        if source == "interrogator" {
+                            // Show why the strike failed in the deck instead of leaving "Sending payload...".
+                            if app.last_api_result == "Sending payload..." { app.last_api_result.clear(); }
+                            app.last_api_result.push_str(&format!("ERROR: {message}"));
+                        }
                         app.last_error = Some(format!("{source}: {message}"));
                         app.add_log(format!(">>> ERROR [{source}]: {message}"));
                     }
@@ -1049,19 +1059,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // --- NEW: Save History Buffer to Disk before exiting ---
-    if !app.console_history.is_empty() {
-        let history_content = app.console_history.join("\n");
+    // Save the history buffer; a failure is printed after the alternate screen is left (below).
+    let history_error = if app.console_history.is_empty() {
+        None
+    } else {
         let path = interrogate::history_path(&|k| std::env::var(k).ok());
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(path, history_content);
-    }
+        interrogate::save_history(&path, &app.console_history.join("\n")).err()
+    };
 
     // 6. Clean Teardown
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
+    if let Some(e) = history_error {
+        eprintln!("saltnitor: {e}");
+    }
     Ok(())
 }
 #[cfg(test)]

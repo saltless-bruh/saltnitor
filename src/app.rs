@@ -2,6 +2,13 @@ use crate::process::{self, ProcessInfo, Target};
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, VecDeque};
 
+/// Which process list a cursor or action belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcPane {
+    Gpu,
+    Sys,
+}
+
 pub struct App {
     pub should_quit: bool,
 
@@ -26,6 +33,9 @@ pub struct App {
     pub cpu_history: Vec<u64>,
 
     // Deep-Dive Telemetry
+    /// False until nvidia-smi has produced a parsable sample, and while it is failing: the GPU
+    /// numbers below are then not measurements and the UI shows `n/a` (INV-18).
+    pub gpu_measured: bool,
     pub gpu_temp: i32,
     pub gpu_power: String,
     pub gpu_processes: Vec<ProcessInfo>,
@@ -46,6 +56,10 @@ pub struct App {
     // --- Process Sniper State ---
     pub gpu_proc_state: ListState,
     pub sys_proc_state: ListState,
+    /// The PID the operator highlighted in each list. The rows re-sort every poll, so an index
+    /// cannot identify the target; `x`/`X` act on this PID's current row (REQ-TUI-010/AC1).
+    pub gpu_selected_pid: Option<u32>,
+    pub sys_selected_pid: Option<u32>,
     /// SIGKILL awaiting the operator's `y` (REQ-PROC-003/AC2).
     pub pending_kill: Option<Target>,
     /// Bottom-line prompt shown while `pending_kill` is set.
@@ -93,6 +107,8 @@ pub struct App {
     pub router_ini: Option<String>,
     /// Bearer from the env var named by `client_key_env`; never a literal (REQ-SEC-013).
     pub client_bearer: Option<String>,
+    /// The raw router's own `--api-key` (`infer_bearer`), used only for the direct hot-swap call.
+    pub infer_bearer: Option<String>,
     /// Scrubs secrets from every log line and crash dump (REQ-SEC-006/AC1).
     pub redactor: crate::auth::Redactor,
 
@@ -176,6 +192,7 @@ impl App {
             ram_used: 0.0,
             cpu_history: vec![0; 100],
             cpu_cores: vec![0.0; 16],
+            gpu_measured: false,
             gpu_temp: 0,
             gpu_power: "0W".to_string(),
             gpu_processes: Vec::new(),
@@ -209,6 +226,7 @@ impl App {
             api_key: false,
             router_ini: None,
             client_bearer: None,
+            infer_bearer: None,
             redactor: crate::auth::Redactor::default(),
             draft_model_idx: 0,
             console_focused: false,
@@ -246,9 +264,28 @@ impl App {
             sys_uptime: 0,
             gpu_proc_state: ListState::default(),
             sys_proc_state: ListState::default(),
+            gpu_selected_pid: None,
+            sys_selected_pid: None,
             show_gpu_inspector: false,
             show_sys_inspector: false,
         }
+    }
+
+    /// Take one poll's nvidia-smi sample. `None` leaves the old numbers in place but marks them
+    /// unmeasured, so the panes render `n/a` instead of a stale or zero value (INV-18).
+    pub fn apply_gpu_sample(&mut self, sample: Option<crate::gpu::GpuSample>) {
+        let Some(s) = sample else {
+            self.gpu_measured = false;
+            return;
+        };
+        self.gpu_measured = true;
+        self.vram_used = s.vram_used_gb;
+        self.gpu_temp = s.temp_c;
+        self.gpu_power = s.power;
+        self.gpu_util = s.util;
+        self.vram_util = s.vram_util;
+        self.gpu_fan = s.fan;
+        self.gpu_clocks = s.clocks;
     }
 
     /// Replace the process rows from one poll and keep the list cursors inside them.
@@ -258,8 +295,57 @@ impl App {
         }
         self.gpu_processes = process::gpu_rows(processes);
         self.sys_processes = process::ram_rows(processes);
-        clamp(&mut self.gpu_proc_state, self.gpu_processes.len());
-        clamp(&mut self.sys_proc_state, self.sys_processes.len());
+        refind(
+            &mut self.gpu_proc_state,
+            &mut self.gpu_selected_pid,
+            &self.gpu_processes,
+        );
+        refind(
+            &mut self.sys_proc_state,
+            &mut self.sys_selected_pid,
+            &self.sys_processes,
+        );
+    }
+
+    /// Move a process-list cursor (wrapping) and remember which PID it now rests on.
+    pub fn move_proc_cursor(&mut self, pane: ProcPane, forward: bool) {
+        let (state, pid, rows) = match pane {
+            ProcPane::Gpu => (
+                &mut self.gpu_proc_state,
+                &mut self.gpu_selected_pid,
+                &self.gpu_processes,
+            ),
+            ProcPane::Sys => (
+                &mut self.sys_proc_state,
+                &mut self.sys_selected_pid,
+                &self.sys_processes,
+            ),
+        };
+        let last = rows.len().saturating_sub(1);
+        let next = match state.selected() {
+            Some(i) if forward => {
+                if i >= last {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            Some(0) => last,
+            Some(i) => i - 1,
+            None => 0,
+        };
+        *pid = rows.get(next).map(|r| r.pid);
+        state.select(pid.map(|_| next));
+    }
+
+    /// The current row of the PID the operator selected; `None` when nothing is selected or the
+    /// PID has left the list.
+    pub fn selected_proc(&self, pane: ProcPane) -> Option<&ProcessInfo> {
+        let (pid, rows) = match pane {
+            ProcPane::Gpu => (self.gpu_selected_pid?, &self.gpu_processes),
+            ProcPane::Sys => (self.sys_selected_pid?, &self.sys_processes),
+        };
+        rows.iter().find(|r| r.pid == pid)
     }
 
     pub fn add_log(&mut self, log: String) {
@@ -321,13 +407,18 @@ impl App {
     }
 }
 
-/// Keep a list cursor inside `len` rows; select the first row once rows appear.
-fn clamp(state: &mut ListState, len: usize) {
-    match state.selected() {
-        Some(_) if len == 0 => state.select(None),
-        Some(i) if i >= len => state.select(Some(len - 1)),
-        Some(_) => {}
-        None if len > 0 => state.select(Some(0)),
-        None => {}
+/// After a poll, move the cursor to where the selected PID now sits. A PID that vanished clears
+/// the selection instead of landing on whichever row took its index.
+fn refind(state: &mut ListState, selected: &mut Option<u32>, rows: &[ProcessInfo]) {
+    let Some(pid) = *selected else {
+        state.select(None);
+        return;
+    };
+    match rows.iter().position(|r| r.pid == pid) {
+        Some(i) => state.select(Some(i)),
+        None => {
+            *selected = None;
+            state.select(None);
+        }
     }
 }
