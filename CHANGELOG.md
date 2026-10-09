@@ -14,7 +14,7 @@ All notable changes to this project are documented here. The format follows
 ### Changed
 - `Contributing_Guidelines.md` → `CONTRIBUTING.md`.
 
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-10-09
 
 Phase 1 hardening. Breaking changes are under **Changed**. Defect ids refer to
 `docs/specs/vnext/baseline/DEFECTS.md`; only defects that landed with a test or a CI gate are listed.
