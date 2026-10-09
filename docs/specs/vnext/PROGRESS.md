@@ -37,3 +37,4 @@ One line per completed task (Appendix A format): `date · task · sha · DONE|BL
 2026-10-09 · T1.15 · 6455835 · DONE · interrogator via :8765 with client key; timings_per_token; history under XDG_STATE_HOME (BD-18, BD-21)
 2026-10-09 · T1.16 · 1601656 · DONE · claims ledger (40 rows, 23 README bullets all covered); README/CHANGELOG/SECURITY rewritten; tuner title router.ini (BD-30); DEFECTS Fixed-by for 20 defects; invariants baseline README:32 entry removed
 2026-10-09 · G1 · 7556abc · BLOCKED · evidence drafted; pending operator: CR-9, CR-10, R1 go, D1–D3, verdict
+2026-10-09 · G1 · 124cc97 · BLOCKED · CR-9/CR-10 approved+applied (operator delegation); acceptance 15/15, rows 2/3 PASS, CI blocking job green; router_ini set in live config; pending operator: row-6 list approval, R1 go, D1–D3, verifier, verdict
