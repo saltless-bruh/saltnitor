@@ -1,28 +1,28 @@
 mod app;
+mod control_api;
 mod events;
 mod ui;
-mod control_api;
 
-use serde::Deserialize;
 use app::App;
-use events::Event;
-use crossterm::{
-    event::{self, Event as CEvent, KeyCode, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
-};
-use reqwest::Client;
-use std::time::Instant;
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{io, time::Duration};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use sysinfo::{System, CpuRefreshKind, RefreshKind, MemoryRefreshKind};
-use tokio::process::Command;
-use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use clap::Parser;
+use crossterm::{
+    ExecutableCommand,
+    event::{self, Event as CEvent, KeyCode, KeyModifiers},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use events::Event;
+use ratatui::{Terminal, backend::CrosstermBackend};
+use reqwest::Client;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::time::Instant;
+use std::{io, time::Duration};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::mpsc;
 
 /// Saltnitor: High-performance hybrid hardware monitor and LLM orchestrator.
 #[derive(Parser, Debug)]
@@ -60,7 +60,7 @@ struct TomlConfig {
 // --- Sudo-Aware Config Loader ---
 fn load_config() -> TomlConfig {
     let mut config_path = std::path::PathBuf::new();
-    
+
     // Intelligently bypass the Sudo Trap
     if let Ok(sudo_user) = std::env::var("SUDO_USER") {
         config_path.push(format!("/home/{}/.config/saltnitor/config.toml", sudo_user));
@@ -98,7 +98,10 @@ fn check_dependencies() -> Result<(), String> {
     }
 
     if !missing.is_empty() {
-        return Err(format!("Missing critical Linux dependencies: {}", missing.join(", ")));
+        return Err(format!(
+            "Missing critical Linux dependencies: {}",
+            missing.join(", ")
+        ));
     }
     Ok(())
 }
@@ -115,7 +118,10 @@ fn upsert_ini_section(content: &str, section: &str, kv: &[(String, String)]) -> 
     let mut end = lines.len();
     for i in (start + 1)..lines.len() {
         let t = lines[i].trim();
-        if t.starts_with('[') && t.ends_with(']') { end = i; break; }
+        if t.starts_with('[') && t.ends_with(']') {
+            end = i;
+            break;
+        }
     }
 
     let mut out: Vec<String> = lines[..=start].to_vec();
@@ -163,7 +169,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = check_dependencies() {
         eprintln!("\n[!] SALTNITOR BOOT SEQUENCE HALTED");
         eprintln!("[!] {}", e);
-        eprintln!("[!] Please install the required packages (e.g., 'iproute2', 'psmisc', 'systemd') and try again.\n");
+        eprintln!(
+            "[!] Please install the required packages (e.g., 'iproute2', 'psmisc', 'systemd') and try again.\n"
+        );
         std::process::exit(1);
     }
 
@@ -171,9 +179,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut sys = System::new_all();
     sys.refresh_cpu_specifics(CpuRefreshKind::everything());
     sys.refresh_memory();
-    
+
     // Get Dynamic CPU & RAM
-    let cpu_name = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_else(|| "Unknown CPU".to_string());
+    let cpu_name = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().to_string())
+        .unwrap_or_else(|| "Unknown CPU".to_string());
     let cpu_core_count = sys.cpus().len();
     let ram_total = sys.total_memory() as f64 / 1_073_741_824.0;
 
@@ -183,7 +195,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut has_nvidia = false;
 
     if let Ok(output) = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=name,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
     {
         if output.status.success() {
@@ -206,8 +221,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Application State & Channels
     let mut app = App::new(
-        cpu_name, cpu_core_count, ram_total, gpu_name, vram_total, has_nvidia,
-        final_host.clone(), final_port, final_svc.clone(), final_ngl, final_ctx
+        cpu_name,
+        cpu_core_count,
+        ram_total,
+        gpu_name,
+        vram_total,
+        has_nvidia,
+        final_host.clone(),
+        final_port,
+        final_svc.clone(),
+        final_ngl,
+        final_ctx,
     );
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
@@ -229,7 +253,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
         let control_port = toml_conf.control_port.unwrap_or(8765);
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], control_port));
-        tokio::spawn(async move { control_api::serve(controller, addr).await; });
+        tokio::spawn(async move {
+            control_api::serve(controller, addr).await;
+        });
     }
 
     // 5. Start Event Producers (Background Tasks)
@@ -266,23 +292,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::time::sleep(Duration::from_millis(1000)).await;
             sys.refresh_cpu_specifics(CpuRefreshKind::everything());
             sys.refresh_memory();
-            sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::everything());
+            sys.refresh_processes_specifics(
+                ProcessesToUpdate::All,
+                true,
+                ProcessRefreshKind::everything(),
+            );
 
             // System Metrics
-            let ram_used = sys.used_memory() as f64 / 1_073_741_824.0; 
+            let ram_used = sys.used_memory() as f64 / 1_073_741_824.0;
             let swap_used = sys.used_swap() as f64 / 1_073_741_824.0;
             let swap_total = sys.total_swap() as f64 / 1_073_741_824.0;
-            let sys_uptime = System::uptime(); 
-            
+            let sys_uptime = System::uptime();
+
             let cpu_cores: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
             let cpu_load = cpu_cores.iter().sum::<f32>() / cpu_cores.len() as f32;
 
             // Top System RAM Culprits (Showing ALL processes > 1MB, Deduplicated)
             let mut procs: Vec<_> = sys.processes().values().collect();
             procs.sort_by(|a, b| b.memory().cmp(&a.memory())); // Sort by memory descending first
-            
+
             let mut seen_names = std::collections::HashSet::new();
-            let sys_processes: Vec<(String, f64)> = procs.iter()
+            let sys_processes: Vec<(String, f64)> = procs
+                .iter()
                 .filter(|p| p.memory() > 1_048_576) // Filter out tiny < 1MB threads
                 .filter_map(|p| {
                     let name = p.name().to_string_lossy().to_string();
@@ -292,7 +323,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         None // Silently drop the ghost thread
                     }
-                }).collect();
+                })
+                .collect();
 
             // NVIDIA Metrics (General)
             let mut vram_used = 0.0;
@@ -302,7 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut vram_util = String::from("0");
             let mut gpu_fan = String::from("N/A");
             let mut gpu_clocks = String::from("N/A");
-            
+
             if has_nvidia {
                 // Expanded query to grab 9 specific data points at once
                 if let Ok(output) = std::process::Command::new("nvidia-smi")
@@ -327,7 +359,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut gpu_processes: Vec<(String, f64)> = Vec::new();
             if has_nvidia {
                 if let Ok(output) = std::process::Command::new("nvidia-smi")
-                    .args(["--query-compute-apps=process_name,used_memory", "--format=csv,noheader,nounits"])
+                    .args([
+                        "--query-compute-apps=process_name,used_memory",
+                        "--format=csv,noheader,nounits",
+                    ])
                     .output()
                 {
                     let out = String::from_utf8_lossy(&output.stdout);
@@ -342,12 +377,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let _ = tx_hw.send(Event::HardwareUpdate {
-                vram_used, ram_used, cpu_load: cpu_load as u64,
-                gpu_temp, gpu_power, gpu_processes,
-                cpu_cores, swap_used, swap_total, sys_processes,
-                gpu_util, vram_util, gpu_fan, gpu_clocks, sys_uptime,
-            }).await;
+            let _ = tx_hw
+                .send(Event::HardwareUpdate {
+                    vram_used,
+                    ram_used,
+                    cpu_load: cpu_load as u64,
+                    gpu_temp,
+                    gpu_power,
+                    gpu_processes,
+                    cpu_cores,
+                    swap_used,
+                    swap_total,
+                    sys_processes,
+                    gpu_util,
+                    vram_util,
+                    gpu_fan,
+                    gpu_clocks,
+                    sys_uptime,
+                })
+                .await;
 
             let _ = tx_hw.send(Event::Tick).await;
         }
@@ -385,10 +433,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(res) = client.get(&url).send().await {
                 if let Ok(json) = res.json::<serde_json::Value>().await {
                     if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
-                        let models: Vec<String> = data.iter()
-                            .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+                        let models: Vec<String> = data
+                            .iter()
+                            .filter_map(|m| {
+                                m.get("id")
+                                    .and_then(|id| id.as_str())
+                                    .map(|s| s.to_string())
+                            })
                             .collect();
-                        
+
                         let _ = tx_models.send(Event::ModelsFetched(models)).await;
                     }
                 }
@@ -424,7 +477,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(users_idx) = stdout.find("users:((\"") {
                         let start = users_idx + 9;
                         if let Some(end) = stdout[start..].find('\"') {
-                            proc_name = stdout[start..start+end].to_string();
+                            proc_name = stdout[start..start + end].to_string();
                         }
                     }
                     format!("Port {}: BLOCKED BY [{}]", port_e, proc_name)
@@ -462,7 +515,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(i) = app.gpu_proc_state.selected() {
                                         if let Some((name, _)) = app.gpu_processes.get(i) {
                                             let proc_name = name.clone();
-                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
+                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
                                             else {
                                                 app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
                                                 tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
@@ -488,7 +541,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(i) = app.sys_proc_state.selected() {
                                         if let Some((name, _)) = app.sys_processes.get(i) {
                                             let proc_name = name.clone();
-                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); } 
+                                            if proc_name == "saltnitor" || proc_name.contains("llama-server") { app.add_log(">>> PROCESS SNIPER: Access Denied.".to_string()); }
                                             else {
                                                 app.add_log(format!(">>> PROCESS SNIPER: Executing SIGKILL (-9) on {}", proc_name));
                                                 tokio::spawn(async move { let _ = tokio::process::Command::new("killall").arg("-9").arg(proc_name).output().await; });
@@ -538,7 +591,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             4 => { app.metrics = !app.metrics; },
                                             5 => { app.api_key = !app.api_key; },
                                             _ => {}
-                                        }, 
+                                        },
                                         _ => {}
                                     }
                                 }
@@ -623,24 +676,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if let Some(i) = app.hot_swap_state.selected() {
                                             if let Some(chosen_model) = app.available_models.get(i).cloned() {
                                                 app.console_focused = false;
-                                                
+
                                                 // 1. Calculate NGL
                                                 let mut auto_ngl = 99;
                                                 let model_upper = chosen_model.to_uppercase();
                                                 for word in model_upper.replace("-", " ").replace("_", " ").split_whitespace() {
                                                     if word.ends_with("B") {
                                                         if let Ok(p) = word.trim_end_matches('B').parse::<f64>() {
-                                                            if p > 14.0 { auto_ngl = 24; } 
+                                                            if p > 14.0 { auto_ngl = 24; }
                                                         }
                                                     }
                                                 }
-                                                
+
                                                 // 2. Lock State
                                                 app.current_ngl = auto_ngl;
                                                 app.active_model = chosen_model.clone();
                                                 app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, chosen_model);
                                                 app.console_cursor = app.console_input.chars().count();
-                                                
+
                                                 // Native-router hot-swap: warm-load the chosen model BY NAME.
                                                 // The router (--models-preset --models-max 1) autoloads it and
                                                 // evicts the incumbent. No router.env, no systemctl, no sudo.
@@ -737,7 +790,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let client = Client::new();
                                             let start = Instant::now();
                                             let url = format!("http://{}:{}/v1/chat/completions", host_api, port_api);
-                                            
+
                                             let mut payload_json: serde_json::Value = serde_json::from_str(&payload).unwrap_or_else(|_| serde_json::json!({}));
                                             if let Some(obj) = payload_json.as_object_mut() {
                                                 obj.insert("stream".to_string(), serde_json::json!(true));
@@ -747,7 +800,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             let mut req = client.post(&url).header("Content-Type", "application/json");
                                             if use_api_key { req = req.header("Authorization", "Bearer sk-saltnitor-2026"); }
                                             let response = req.body(stream_payload).send().await;
-                                                
+
                                             match response {
                                                 Ok(mut res) => {
                                                     let status = res.status().to_string();
@@ -819,13 +872,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 KeyCode::PageUp => app.scroll_logs_up(),
                                 KeyCode::PageDown => app.scroll_logs_down(),
                                 KeyCode::Esc => { app.show_gpu_inspector = false; app.show_sys_inspector = false; },
-                                
-                                KeyCode::Char('S') => { 
+
+                                KeyCode::Char('S') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Starting {}...", svc));
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "start", &svc]).output().await; });
                                 }
-                                KeyCode::Char('X') => { 
+                                KeyCode::Char('X') => {
                                     let svc = app.service_name.clone();
                                     app.add_log(format!(">>> SYSTEMCTL: Stopping {}...", svc));
                                     tokio::spawn(async move { let _ = tokio::process::Command::new("sudo").args(["-n", "systemctl", "stop", &svc]).output().await; });
@@ -904,17 +957,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Event::ModelsFetched(models) => {
                         app.available_models = models;
-                        
+
                         // --- Auto-select the first model if we don't have one ---
                         if app.active_model == "None" && !app.available_models.is_empty() {
                             let first_model = app.available_models[0].clone();
                             app.active_model = first_model.clone();
-                            
+
                             // Dynamically rewrite the console input with the first discovered model
                             app.console_input = format!(r#"{{"model": "{}", "messages": [{{"role": "user", "content": "ping"}}]}}"#, first_model);
                             app.console_cursor = app.console_input.chars().count();
                         }
-                        
+
                         // --- FIXED: Prevent out-of-bounds using the new Hot-Swap ListState ---
                         if let Some(selected) = app.hot_swap_state.selected() {
                             if selected >= app.available_models.len() && !app.available_models.is_empty() {
@@ -950,13 +1003,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Clamp GPU State
                         if let Some(selected) = app.gpu_proc_state.selected() {
-                            if selected >= app.gpu_processes.len() && !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(app.gpu_processes.len() - 1)); } 
+                            if selected >= app.gpu_processes.len() && !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(app.gpu_processes.len() - 1)); }
                             else if app.gpu_processes.is_empty() { app.gpu_proc_state.select(None); }
                         } else if !app.gpu_processes.is_empty() { app.gpu_proc_state.select(Some(0)); }
 
                         // Clamp Sys State
                         if let Some(selected) = app.sys_proc_state.selected() {
-                            if selected >= app.sys_processes.len() && !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(app.sys_processes.len() - 1)); } 
+                            if selected >= app.sys_processes.len() && !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(app.sys_processes.len() - 1)); }
                             else if app.sys_processes.is_empty() { app.sys_proc_state.select(None); }
                         } else if !app.sys_processes.is_empty() { app.sys_proc_state.select(Some(0)); }
 

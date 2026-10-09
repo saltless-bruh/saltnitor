@@ -29,12 +29,18 @@ pub enum Event {
     /// A scheduled tick to force a UI refresh
     Tick,
     // --- Live Streaming Events ---
-    ApiStreamStart { ttft_ms: u128 },
+    ApiStreamStart {
+        ttft_ms: u128,
+    },
     ApiStreamChunk(String),
-    ApiStreamEnd { eval_tps: f64, gen_tps: f64, status: String },
-    
+    ApiStreamEnd {
+        eval_tps: f64,
+        gen_tps: f64,
+        status: String,
+    },
+
     ModelsFetched(Vec<String>),
     PortAudit(String),
     /// Control API → the currently-resident model changed (reflects headless swaps in the TUI)
     ActiveModelSet(String),
-} 
+}
