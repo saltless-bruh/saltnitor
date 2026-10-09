@@ -9,6 +9,7 @@ pub mod events;
 pub mod gpu;
 pub mod hotswap;
 pub mod interrogate;
+pub mod proc_keys;
 pub mod process;
 pub mod proxy_stream;
 pub mod systemctl;

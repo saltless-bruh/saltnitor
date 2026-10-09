@@ -6,10 +6,11 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use events::Event;
+use proc_keys::ProcKey;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use saltnitor::{
-    app, auth, config_v1, control_api, events, gpu, hotswap, interrogate, process, proxy_stream,
-    systemctl, ui,
+    app, auth, config_v1, control_api, events, gpu, hotswap, interrogate, proc_keys, process,
+    proxy_stream, systemctl, ui,
 };
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -638,39 +639,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             app.confirm_line = None;
                             if key.code == KeyCode::Char('y') { confirm_kill(&mut app, target, &tx); }
                             else { app.add_log(">>> PROCESS: kill cancelled".to_string()); }
-                        } else if app.show_gpu_inspector {
-                            // --- PROCESS SNIPER (GPU) ---
-                            match key.code {
-                                KeyCode::Esc | KeyCode::Char('g') | KeyCode::Char('q') => app.show_gpu_inspector = false,
-                                KeyCode::Up => app.move_proc_cursor(ProcPane::Gpu, false),
-                                KeyCode::Down => app.move_proc_cursor(ProcPane::Gpu, true),
-                                KeyCode::Char('x') | KeyCode::Delete => {
+                        } else if app.show_gpu_inspector || app.show_sys_inspector {
+                            // --- PROCESS SNIPER (GPU or CPU/RAM pane); keys classified by proc_keys (D3 finding) ---
+                            let (pane, close_char) = if app.show_gpu_inspector { (ProcPane::Gpu, 'g') } else { (ProcPane::Sys, 'c') };
+                            match proc_keys::classify(&key, close_char) {
+                                ProcKey::Close => {
+                                    if app.show_gpu_inspector { app.show_gpu_inspector = false; } else { app.show_sys_inspector = false; }
+                                }
+                                ProcKey::Up => app.move_proc_cursor(pane, false),
+                                ProcKey::Down => app.move_proc_cursor(pane, true),
+                                ProcKey::Terminate => {
                                     // the PID the operator selected, found in the current rows (not a list index)
-                                    let sel = app.selected_proc(ProcPane::Gpu).cloned();
+                                    let sel = app.selected_proc(pane).cloned();
                                     if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
                                 }
-                                KeyCode::Char('X') => {
-                                    let sel = app.selected_proc(ProcPane::Gpu).cloned();
+                                ProcKey::Kill => {
+                                    let sel = app.selected_proc(pane).cloned();
                                     if let Some(info) = sel { ask_kill(&mut app, &info); }
                                 }
-                                _ => {}
-                            }
-                        } else if app.show_sys_inspector {
-                            // --- PROCESS SNIPER (CPU/RAM) ---
-                            match key.code {
-                                KeyCode::Esc | KeyCode::Char('c') | KeyCode::Char('q') => app.show_sys_inspector = false,
-                                KeyCode::Up => app.move_proc_cursor(ProcPane::Sys, false),
-                                KeyCode::Down => app.move_proc_cursor(ProcPane::Sys, true),
-                                KeyCode::Char('x') | KeyCode::Delete => {
-                                    // the PID the operator selected, found in the current rows (not a list index)
-                                    let sel = app.selected_proc(ProcPane::Sys).cloned();
-                                    if let Some(info) = sel { start_terminate(&mut app, &info, &tx); }
-                                }
-                                KeyCode::Char('X') => {
-                                    let sel = app.selected_proc(ProcPane::Sys).cloned();
-                                    if let Some(info) = sel { ask_kill(&mut app, &info); }
-                                }
-                                _ => {}
+                                ProcKey::Other => {}
                             }
                         } else if app.show_tuner {
                             // --- DEEP TUNER MENU CONTROLS (Keep exact same as before) ---
