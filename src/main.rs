@@ -238,18 +238,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Sits in front of llama.cpp's native router (--models-preset). Provides the
     // VRAM oracle + /v1/ensure that the router itself lacks. Binds 127.0.0.1 only.
     {
-        let controller = Arc::new(control_api::ControlApi::new(
-            profile_metas(&toml_conf),
-            toml_conf
-                .router_base
-                .clone()
-                .unwrap_or_else(|| format!("http://{}:{}", final_host, final_port)),
-            toml_conf.infer_bearer.clone(),
-            toml_conf.control_token.clone(),
-            toml_conf.reserve_vram_gb.unwrap_or(0.8),
-            toml_conf.reserve_ram_gb.unwrap_or(1.0),
-            tx.clone(),
-        ));
+        let controller = Arc::new(
+            control_api::ControlApi::new(
+                profile_metas(&toml_conf),
+                toml_conf
+                    .router_base
+                    .clone()
+                    .unwrap_or_else(|| format!("http://{}:{}", final_host, final_port)),
+                toml_conf.infer_bearer.clone(),
+                toml_conf.control_token.clone(),
+                toml_conf.reserve_vram_gb.unwrap_or(0.8),
+                toml_conf.reserve_ram_gb.unwrap_or(1.0),
+                tx.clone(),
+            )
+            .allow_query_token(toml_conf.allow_query_token.unwrap_or(false)),
+        );
+        if toml_conf.allow_query_token.unwrap_or(false) {
+            let warning = "saltnitor: security: allow_query_token=true — ?token= is accepted on GET /v1/ensure/stream only; the value is redacted in logs";
+            eprintln!("{warning}");
+            app.add_log(warning.to_string());
+        }
         let control_port = toml_conf.control_port.unwrap_or(8765);
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], control_port));
         tokio::spawn(async move {

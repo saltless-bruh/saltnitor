@@ -21,6 +21,7 @@ serde_path_to_error = "0.1"   # dotted key path in config diagnostics (REQ-CFG-0
 # --- added for the headless control API (control_api.rs) ---
 axum = "0.8"            # default features include json + tokio + query (all needed)
 tokio-stream = "0.1"    # ReceiverStream + StreamExt for the /v1/ensure/stream SSE body
+subtle = "2"            # constant-time token comparison (REQ-SEC-004); BSD-3-Clause
 
 [workspace]
 members = ["tools/fake-llama-server"]

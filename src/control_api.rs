@@ -26,10 +26,10 @@ use axum::{
     Json, Router,
     body::{Body, Bytes},
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     response::sse::{Event as SseEvent, KeepAlive, Sse},
-    routing::{get, post},
+    routing::{MethodRouter, get, post},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc};
@@ -57,6 +57,7 @@ pub struct ControlApi {
     router_base: String,           // e.g. http://127.0.0.1:8080
     infer_bearer: Option<String>,  // bearer the router expects, if any
     control_token: Option<String>, // bearer required on THIS API (None = open on localhost)
+    allow_query_token: bool,       // `?token=` compat on GET /v1/ensure/stream (REQ-SEC-005/AC3)
     reserve_vram_gb: f64,          // GPU headroom kept free (compute buffers)
     reserve_ram_gb: f64,
     tx: mpsc::Sender<Event>,
@@ -80,12 +81,19 @@ impl ControlApi {
             router_base,
             infer_bearer,
             control_token,
+            allow_query_token: false,
             reserve_vram_gb,
             reserve_ram_gb,
             tx,
             http: reqwest::Client::new(),
             ensure_lock: Mutex::new(()),
         }
+    }
+
+    /// Opt in to `?token=` on `GET /v1/ensure/stream` only (default off).
+    pub fn allow_query_token(mut self, allow: bool) -> Self {
+        self.allow_query_token = allow;
+        self
     }
 
     fn infer_endpoint(&self) -> String {
@@ -341,7 +349,6 @@ impl Stage {
 pub struct EnsureRequest {
     pub profile: String,
     pub force: Option<bool>,
-    pub token: Option<String>, // SSE query-param auth (EventSource can't set headers)
 }
 
 #[derive(Serialize)]
@@ -390,16 +397,6 @@ pub struct OomInfo {
     pub total_ram_gb: f64,
 }
 
-fn auth_ok(api: &ControlApi, headers: &HeaderMap) -> bool {
-    match &api.control_token {
-        None => true,
-        Some(t) => {
-            headers.get("authorization").and_then(|h| h.to_str().ok())
-                == Some(&format!("Bearer {}", t))
-        }
-    }
-}
-
 /// 507 `ORACLE_REJECTED` with the numbers that caused it in `details` (REQ-ERR-001).
 fn oracle_rejected(msg: String, i: &OomInfo) -> ApiError {
     ApiError::new(ErrorCode::OracleRejected, msg).details(serde_json::json!({
@@ -410,18 +407,10 @@ fn oracle_rejected(msg: String, i: &OomInfo) -> ApiError {
     }))
 }
 
-fn auth_required() -> ApiError {
-    ApiError::new(ErrorCode::AuthRequired, "missing or invalid credentials")
-}
-
 async fn h_ensure(
     State(api): State<Arc<ControlApi>>,
-    headers: HeaderMap,
     Json(req): Json<EnsureRequest>,
 ) -> axum::response::Response {
-    if !auth_ok(&api, &headers) {
-        return auth_required().into_response();
-    }
     let profile = req.profile.clone();
     match api.ensure(req, &ProgressSink::None).await {
         EnsureOutcome::Loaded {
@@ -475,16 +464,8 @@ async fn h_ensure(
 
 async fn h_ensure_stream(
     State(api): State<Arc<ControlApi>>,
-    headers: HeaderMap,
     Query(req): Query<EnsureRequest>,
 ) -> axum::response::Response {
-    let token_ok = match &api.control_token {
-        None => true,
-        Some(t) => req.token.as_deref() == Some(t.as_str()),
-    };
-    if !auth_ok(&api, &headers) && !token_ok {
-        return auth_required().into_response();
-    }
     let (ptx, prx) = mpsc::channel::<Stage>(16);
     let a = api.clone();
     tokio::spawn(async move {
@@ -511,8 +492,8 @@ async fn h_models(State(api): State<Arc<ControlApi>>) -> Json<serde_json::Value>
         .collect();
     Json(serde_json::json!({ "object": "list", "data": data }))
 }
-async fn h_health() -> StatusCode {
-    StatusCode::OK
+async fn h_health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({"status": "ok"}))
 }
 
 /// OpenAI-compatible POST /v1/chat/completions PROXY with an ensure-then-forward step.
@@ -620,20 +601,68 @@ async fn h_not_supported(uri: axum::http::Uri) -> ApiError {
     )
 }
 
+/// Every path `router()` can serve. Must equal the policy's path set (REQ-SEC-001/AC3).
+pub const HANDLER_PATHS: &[&str] = &[
+    "/healthz",
+    "/v1/models",
+    "/v1/status",
+    "/v1/chat/completions",
+    "/v1/ensure",
+    "/v1/ensure/stream",
+];
+
+fn handler_for(path: &str) -> Option<MethodRouter<Arc<ControlApi>>> {
+    Some(match path {
+        "/healthz" => get(h_health),
+        "/v1/models" => get(h_models),
+        "/v1/status" => get(h_status),
+        "/v1/chat/completions" => post(h_chat),
+        "/v1/ensure" => post(h_ensure),
+        "/v1/ensure/stream" => get(h_ensure_stream),
+        _ => return None,
+    })
+}
+
+/// The router: one route per policy row, the auth layer over everything, default-deny fallback.
+pub fn router(api: Arc<ControlApi>, auth: Arc<crate::auth::AuthState>) -> Result<Router, String> {
+    let mut r = Router::new();
+    for p in crate::auth::POLICY {
+        let h =
+            handler_for(p.path).ok_or_else(|| format!("policy entry {} has no handler", p.path))?;
+        r = r.route(p.path, h);
+    }
+    Ok(r.fallback(h_not_supported)
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            crate::auth::middleware,
+        ))
+        .with_state(api))
+}
+
 /// Spawn from main.rs: `tokio::spawn(control_api::serve(api, addr));`
 pub async fn serve(api: Arc<ControlApi>, addr: std::net::SocketAddr) {
-    let app = Router::new()
-        .route("/v1/ensure", post(h_ensure))
-        .route("/v1/ensure/stream", get(h_ensure_stream))
-        .route("/v1/status", get(h_status))
-        .route("/v1/models", get(h_models))
-        .route("/v1/chat/completions", post(h_chat))
-        .route("/healthz", get(h_health))
-        .fallback(h_not_supported)
-        .with_state(api);
+    let log_tx = api.tx.clone();
+    let auth = crate::auth::AuthState::new(
+        api.control_token.clone(),
+        api.allow_query_token,
+        move |line| {
+            let _ = log_tx.try_send(Event::LogLine(line));
+        },
+    );
+    let app = match router(api, auth) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[control_api] {e}"); // becomes Event::Error in T1.14
+            return;
+        }
+    };
     match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => {
-            let _ = axum::serve(l, app).await;
+            let _ = axum::serve(
+                l,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await;
         }
         Err(e) => eprintln!("[control_api] bind {} failed: {}", addr, e),
     }
@@ -1271,25 +1300,26 @@ mod tests {
         assert_eq!(v["error"]["code"], "AUTH_REQUIRED");
     }
 
-    /// BD-04 evidence probe — the query token is always accepted; measured, not asserted (REQ-MIG-002/AC3).
+    /// BD-04 fixed by T1.9: a correct `?token=` is refused unless `allow_query_token` is set (REQ-SEC-005/AC2).
+    ///
+    /// Verifies: REQ-SEC-005/AC2
     #[tokio::test]
-    #[ignore = "BD-04 evidence probe: cargo test bd04_query_token_is_always_accepted -- --ignored --nocapture"]
-    async fn bd04_query_token_is_always_accepted() {
+    async fn query_token_is_refused_by_default_bd04_fixed() {
         let r = rig(
             scenario("control-api-legacy.toml"),
             &[("A", fits())],
             Some("t0k"),
         )
         .await;
-        let ok = r
+        let refused = r
             .http
             .get(r.url("/v1/ensure/stream?profile=A&token=t0k"))
             .send()
             .await
             .unwrap();
-        let status = ok.status().as_u16();
-        let last = stages(&ok.text().await.unwrap()).last().cloned();
-        println!("BD-04: ?token= on /v1/ensure/stream → HTTP {status}, last stage {last:?}");
+        assert_eq!(refused.status().as_u16(), 401);
+        let v: Value = refused.json().await.unwrap();
+        assert_eq!(v["error"]["code"], "AUTH_REQUIRED");
     }
 
     /// Verifies: REQ-MIG-002/AC1, REQ-MIG-002/AC2, REQ-MIG-007/AC1, REQ-TST-002/AC1

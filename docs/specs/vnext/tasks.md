@@ -257,7 +257,7 @@ python3 docs/specs/vnext/tools/spec_lint.py      # from T0.9
   - **Do:** `ApiError { code, message, details, request_id }` covering the Appendix B codes; one `status()`; `type` strings; `IntoResponse`; replace plain-text errors; unknown `/v1/*` → `ENDPOINT_NOT_SUPPORTED`.
   - **Done when:** a table-driven test covers every Appendix B code; chat errors are JSON envelopes.
 
-- [ ] **T1.9 — Authentication middleware and route policy** · *test-first*
+- [x] **T1.9 — Authentication middleware and route policy** · *test-first*
   - **Reqs:** REQ-SEC-001, REQ-SEC-002/AC3, REQ-SEC-004, REQ-SEC-005, REQ-SEC-011, REQ-SEC-015, REQ-PRX-016, REQ-TST-008
   - **Depends:** T1.8
   - **Files:** `src/auth.rs` (new), `src/control_api.rs` (router), `tests/auth_policy.rs`
