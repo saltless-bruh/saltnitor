@@ -12,11 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub const SCHEMA_VERSION: u32 = 1;
-/// §6 default for `max_body_bytes` (32 MiB).
-#[allow(
-    dead_code,
-    reason = "consumed by the proxy body limit in T1.12 (REQ-PRX-017)"
-)]
+/// §6 default for `max_body_bytes` (32 MiB); consumed by the proxy body limit (REQ-PRX-017).
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 33_554_432;
 
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
